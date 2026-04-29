@@ -22,3 +22,5 @@ broadcast/
 out/
 report/
 lcov.info
+others/fe/
+others/backend/
