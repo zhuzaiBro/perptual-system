@@ -405,3 +405,25 @@ test/
 ## License
 
 BUSL-1.1
+
+
+## sepolia 部署的合约地址
+Sepolia 上相关合约已部署（链上 bytecode 已核对），本次用到地址如下：
+
+角色	地址
+TestERC20 USDC
+0xf3B23a25F2ef5cD41E35eC6B48F97397d0d85dc0
+MetaNodeDealer
+0xfb672F19eC0423d47c3f6782354981D9427E1b9F
+Perp BTC-PERP
+0x3184BD187136591CC711FeA91A6ff11ab46eD4E0
+Perp ETH-PERP
+0x5FcD26f8b85215f1D981Ddb3FFA034c381D025B9
+MarkPrice BTC
+0xCd34a27AE673e86Ae21d973fC2E75Ba02f7eB130
+MarkPrice ETH
+0x53FCe67a163253d8F47f3F7fC44028544976787C
+浏览器示例：
+[USDC](https://sepolia.etherscan.io/address/0xf3b23a25f2ef5cd41e35ec6b48f97397d0d85dc0)、
+[Dealer](https://sepolia.etherscan.io/address/0xfb672f19ec0423d47c3f6782354981d9427e1b9f)。
+

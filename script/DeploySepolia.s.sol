@@ -45,7 +45,7 @@ contract DeploySepoliaScript is Script {
     function test() public { }
 
     /// @dev 私钥：支持 `0x` 前缀或 64 位 hex 无前缀（与常见 .env / cast 写法一致）
-    function _envPrivateKey(string memory name) internal returns (uint256) {
+    function _envPrivateKey(string memory name) internal view returns (uint256) {
         string memory raw = vm.envString(name);
         bytes memory b = bytes(raw);
         if (b.length >= 2 && b[0] == bytes1("0") && (b[1] == bytes1("x") || b[1] == bytes1("X"))) {

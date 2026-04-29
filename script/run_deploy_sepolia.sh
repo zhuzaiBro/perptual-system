@@ -2,10 +2,16 @@
 # Sepolia：MetaNode 一键部署 +（可选）Etherscan 验证
 # 用法：在项目根目录执行 ./script/run_deploy_sepolia.sh
 # 依赖：.env 或环境变量 MetaNode_DEPLOYER_PK、SEPOLIA_RPC_URL；验证需 ETHERSCAN_API_KEY
+# 建议：`foundryup` 安装 stable，并让 ~/.foundry/bin 优先于旧版（如 cargo）的 forge，否则 --verify 可能因 Etherscan API 失效。
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+if [[ -x "${HOME}/.foundry/bin/forge" ]]; then
+  PATH="${HOME}/.foundry/bin:${PATH}"
+  export PATH
+fi
 
 if [[ -f "$ROOT/.env" ]]; then
   set -a
