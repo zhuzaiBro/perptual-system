@@ -260,12 +260,7 @@ library Trading {
      * @dev info 的高 64 位是 makerFeeRate
      */
     function _info2MakerFeeRate(bytes32 info) internal pure returns (int256) {
-        bytes8 value = bytes8(info >> 192);
-        int64 makerFee;
-        assembly {
-            makerFee := value
-        }
-        return int256(makerFee);
+        return int256(int64(uint64(uint256(info) >> 192)));
     }
 
     /**
@@ -275,12 +270,7 @@ library Trading {
      * @dev info 的 [128, 192) 位是 takerFeeRate
      */
     function _info2TakerFeeRate(bytes32 info) internal pure returns (int256 takerFeeRate) {
-        bytes8 value = bytes8(info >> 128);
-        int64 takerFee;
-        assembly {
-            takerFee := value
-        }
-        return int256(takerFee);
+        return int256(int64(uint64(uint256(info) >> 128)));
     }
 
     /**
@@ -290,11 +280,6 @@ library Trading {
      * @dev info 的 [64, 128) 位是 expiration
      */
     function _info2Expiration(bytes32 info) internal pure returns (uint256) {
-        bytes8 value = bytes8(info >> 64);
-        uint64 expiration;
-        assembly {
-            expiration := value
-        }
-        return uint256(expiration);
+        return uint256(uint64(uint256(info) >> 64));
     }
 }
