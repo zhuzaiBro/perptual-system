@@ -15,6 +15,7 @@ import {
   fetchMetanodeMarkets,
   fetchMetanodeOrderBook,
   fetchMetanodeTrades,
+  METANODE_API_BASE,
   type OrderBookEntryDTO,
   type PerpMarketDTO,
 } from "@/lib/metanode-api";
@@ -345,7 +346,7 @@ export default function TradePage({
 
       {dataError ? (
         <div className="mx-4 mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          链上行情加载失败：{dataError}（请确认后端 {process.env.NEXT_PUBLIC_METANODE_API_URL ?? "http://127.0.0.1:28888"} 已启动）
+          链上行情加载失败：{dataError}（请确认后端 {METANODE_API_BASE} 已启动）
         </div>
       ) : null}
       {!isSupabaseConfigured() ? (

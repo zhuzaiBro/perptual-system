@@ -3,5 +3,8 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "buildCommand": "npm run build",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "env": {
+    "NEXT_PUBLIC_METANODE_API_URL": "https://perptural-api.zood.work"
+  }
 }
