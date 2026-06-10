@@ -1,10 +1,18 @@
 /** MetaNode 后端 HTTP（钱包登录等） */
 
-export const METANODE_API_BASE =
-  typeof process.env.NEXT_PUBLIC_METANODE_API_URL === "string" &&
-  process.env.NEXT_PUBLIC_METANODE_API_URL.trim() !== ""
-    ? process.env.NEXT_PUBLIC_METANODE_API_URL.trim().replace(/\/$/, "")
-    : "http://127.0.0.1:28888";
+/** 生产默认 API（Vercel 未注入 env 时仍走公网后端，避免构建产物请求 localhost） */
+const PROD_METANODE_API = "https://perptural-api.zood.work";
+const DEV_METANODE_API = "http://127.0.0.1:28888";
+
+function resolveMetanodeApiBase(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_METANODE_API_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  return process.env.NODE_ENV === "production"
+    ? PROD_METANODE_API
+    : DEV_METANODE_API;
+}
+
+export const METANODE_API_BASE = resolveMetanodeApiBase();
 
 export const METANODE_TOKEN_KEY = "metanode_token";
 /** JWT exp（Unix 秒），与 verify 返回的 expiresAt 一致时可由后端写入 */
