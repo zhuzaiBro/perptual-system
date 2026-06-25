@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,13 +35,9 @@ type MatchEngine struct {
 	redis      *redis.Redis
 	nodeID     string
 
-	// 订单簿：perp -> side -> orders
+	// 订单簿：perp -> 价档+FIFO 队列
 	orderBooks map[string]*OrderBook
 	mu         sync.RWMutex
-
-	// orderId -> 剩余可撮合 paper 绝对值（与链上累计成交量配合；订单对象仍保留签名时的完整 paper/credit）
-	remain map[string]*big.Int
-	remMu  sync.Mutex
 
 	// 待提交的交易
 	pendingTrades []*MatchResult
@@ -56,14 +51,6 @@ type MatchEngine struct {
 	eventQueue   chan *model.EngineEvent
 
 	stopCh chan struct{}
-}
-
-// OrderBook 订单簿
-type OrderBook struct {
-	Perp       string
-	BuyOrders  []*model.Order // 买单（做多），按价格从高到低、同价按时间优先排序
-	SellOrders []*model.Order // 卖单（做空），按价格从低到高、同价按时间优先排序
-	mu         sync.RWMutex
 }
 
 // MatchResult 撮合结果
@@ -99,7 +86,6 @@ func NewMatchEngine(cfg config.MatchEngineConfig, orderModel model.OrderModel, t
 		redis:      rds,
 		nodeID:     engineNodeID(),
 		orderBooks: make(map[string]*OrderBook),
-		remain:     make(map[string]*big.Int),
 		eventQueue: make(chan *model.EngineEvent, 8192),
 		stopCh:     make(chan struct{}),
 	}
@@ -183,10 +169,6 @@ func (e *MatchEngine) resetInMemory() {
 	e.orderBooks = make(map[string]*OrderBook)
 	e.mu.Unlock()
 
-	e.remMu.Lock()
-	e.remain = make(map[string]*big.Int)
-	e.remMu.Unlock()
-
 	e.tradeMu.Lock()
 	e.pendingTrades = nil
 	e.tradeMu.Unlock()
@@ -224,31 +206,16 @@ func (e *MatchEngine) reserveRestoredMatch(trade *MatchResult, matchAmt *big.Int
 	book.mu.Lock()
 	defer book.mu.Unlock()
 	for _, order := range []*model.Order{trade.TakerOrder, trade.MakerOrder} {
-		if order == nil || e.orderInBook(book, order.OrderId) {
+		if order == nil || book.hasOrderLocked(order.OrderId) {
 			continue
 		}
 		full := absPaperString(order.PaperAmount)
 		if full.Sign() > 0 {
-			e.remMu.Lock()
-			if e.remain[order.OrderId] == nil {
-				e.remain[order.OrderId] = full
-			}
-			e.remMu.Unlock()
-			e.insertRestingOrderLocked(book, order)
+			book.insertRestingLocked(order, full)
 		}
 	}
-
-	e.remMu.Lock()
-	for _, oid := range []string{trade.TakerOrder.OrderId, trade.MakerOrder.OrderId} {
-		if e.remain[oid] != nil {
-			e.remain[oid].Sub(e.remain[oid], matchAmt)
-			if e.remain[oid].Sign() <= 0 {
-				delete(e.remain, oid)
-				e.removeOrderFromBookLocked(book, oid)
-			}
-		}
-	}
-	e.remMu.Unlock()
+	book.applyFillLocked(trade.TakerOrder.OrderId, matchAmt)
+	book.applyFillLocked(trade.MakerOrder.OrderId, matchAmt)
 }
 
 // Stop 停止撮合引擎
@@ -427,16 +394,7 @@ func orderExpired(o *model.Order, now int64) bool {
 	return o.Expiration <= now
 }
 
-func (e *MatchEngine) dropExpiredLocked(book *OrderBook, side string, idx int, o *model.Order) {
-	switch side {
-	case "buy":
-		book.BuyOrders = append(book.BuyOrders[:idx], book.BuyOrders[idx+1:]...)
-	case "sell":
-		book.SellOrders = append(book.SellOrders[:idx], book.SellOrders[idx+1:]...)
-	}
-	e.remMu.Lock()
-	delete(e.remain, o.OrderId)
-	e.remMu.Unlock()
+func (e *MatchEngine) dropExpiredOrder(book *OrderBook, o *model.Order) {
 	if e.orderModel != nil {
 		_ = e.orderModel.UpdateStatus(context.Background(), o.OrderId, model.OrderStatusCancelled, o.FilledAmount)
 	}
@@ -445,21 +403,9 @@ func (e *MatchEngine) dropExpiredLocked(book *OrderBook, side string, idx int, o
 
 // pruneExpired 移除过期单，避免深度展示脏数据或链上反复 revert。
 func (e *MatchEngine) pruneExpired(book *OrderBook) {
-	now := time.Now().Unix()
-	for i := 0; i < len(book.BuyOrders); {
-		if orderExpired(book.BuyOrders[i], now) {
-			e.dropExpiredLocked(book, "buy", i, book.BuyOrders[i])
-			continue
-		}
-		i++
-	}
-	for i := 0; i < len(book.SellOrders); {
-		if orderExpired(book.SellOrders[i], now) {
-			e.dropExpiredLocked(book, "sell", i, book.SellOrders[i])
-			continue
-		}
-		i++
-	}
+	book.pruneExpiredLocked(time.Now().Unix(), func(o *model.Order) {
+		e.dropExpiredOrder(book, o)
+	})
 }
 
 // AddOrder 持久化订单接收事件，并投递给 leader 的单线程事件循环。
@@ -513,32 +459,7 @@ func (e *MatchEngine) removeOrderInMemory(orderID string) bool {
 	e.mu.RUnlock()
 
 	for _, book := range books {
-		if book == nil {
-			continue
-		}
-		book.mu.Lock()
-		removed := false
-		for i, o := range book.BuyOrders {
-			if o != nil && o.OrderId == orderID {
-				book.BuyOrders = append(book.BuyOrders[:i], book.BuyOrders[i+1:]...)
-				removed = true
-				break
-			}
-		}
-		if !removed {
-			for i, o := range book.SellOrders {
-				if o != nil && o.OrderId == orderID {
-					book.SellOrders = append(book.SellOrders[:i], book.SellOrders[i+1:]...)
-					removed = true
-					break
-				}
-			}
-		}
-		book.mu.Unlock()
-		if removed {
-			e.remMu.Lock()
-			delete(e.remain, orderID)
-			e.remMu.Unlock()
+		if book != nil && book.remove(orderID) {
 			return true
 		}
 	}
@@ -728,27 +649,15 @@ func (e *MatchEngine) restoreOrder(order *model.Order, remain *big.Int) {
 }
 
 func (e *MatchEngine) addOrderWithRemain(order *model.Order, remain *big.Int) {
-	e.remMu.Lock()
-	e.remain[order.OrderId] = new(big.Int).Set(remain)
-	e.remMu.Unlock()
-
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	orderBook, ok := e.orderBooks[order.Perp]
 	if !ok {
-		orderBook = &OrderBook{Perp: order.Perp}
+		orderBook = newOrderBook(order.Perp)
 		e.orderBooks[order.Perp] = orderBook
 	}
+	e.mu.Unlock()
 
-	orderBook.mu.Lock()
-	defer orderBook.mu.Unlock()
-
-	if e.orderInBook(orderBook, order.OrderId) {
-		return
-	}
-
-	e.insertRestingOrderLocked(orderBook, order)
+	orderBook.insertResting(order, remain)
 }
 
 func (e *MatchEngine) matchIncomingOrder(order *model.Order, remaining *big.Int) {
@@ -760,17 +669,15 @@ func (e *MatchEngine) matchIncomingOrder(order *model.Order, remaining *big.Int)
 	book.mu.Lock()
 	defer book.mu.Unlock()
 
-	if e.orderInBook(book, order.OrderId) {
+	if book.hasOrderLocked(order.OrderId) {
 		return
 	}
 	e.pruneExpired(book)
 
-	remaining = e.matchAgainstRestingLocked(book, order, remaining)
-	if remaining.Sign() > 0 {
-		e.remMu.Lock()
-		e.remain[order.OrderId] = new(big.Int).Set(remaining)
-		e.remMu.Unlock()
-		e.insertRestingOrderLocked(book, order)
+	takerRemaining := new(big.Int).Set(remaining)
+	takerRemaining = e.matchAgainstRestingLocked(book, order, takerRemaining)
+	if takerRemaining.Sign() > 0 {
+		book.insertRestingLocked(order, takerRemaining)
 	}
 }
 
@@ -779,7 +686,7 @@ func (e *MatchEngine) getOrCreateBook(perp string) *OrderBook {
 	defer e.mu.Unlock()
 	book, ok := e.orderBooks[perp]
 	if !ok {
-		book = &OrderBook{Perp: perp}
+		book = newOrderBook(perp)
 		e.orderBooks[perp] = book
 	}
 	return book
@@ -795,36 +702,15 @@ func (e *MatchEngine) matchAgainstRestingLocked(book *OrderBook, taker *model.Or
 		return takerRemaining
 	}
 
-	if takerPaper.Sign() > 0 {
-		for takerRemaining.Sign() > 0 {
-			maker, idx, ok := e.nextMatchableMakerLocked(book.SellOrders, taker, takerPrice, false)
-			if !ok {
-				break
-			}
-			makerRemaining := e.remainingOf(maker.OrderId)
-			if makerRemaining.Sign() <= 0 {
-				book.SellOrders = append(book.SellOrders[:idx], book.SellOrders[idx+1:]...)
-				continue
-			}
-			matchAmount := minBig(takerRemaining, makerRemaining)
-			if _, err := e.enqueueMatch(taker, maker, matchAmount, calculatePrice(maker)); err != nil {
-				logx.Errorf("enqueue match failed: %v", err)
-				break
-			}
-			takerRemaining.Sub(takerRemaining, matchAmount)
-			e.decreaseRestingLocked(book, "sell", idx, maker.OrderId, matchAmount)
-		}
-		return takerRemaining
-	}
-
+	takerIsBuy := takerPaper.Sign() > 0
 	for takerRemaining.Sign() > 0 {
-		maker, idx, ok := e.nextMatchableMakerLocked(book.BuyOrders, taker, takerPrice, true)
+		maker, ok := book.nextMatchableMakerLocked(taker, takerPrice, takerIsBuy)
 		if !ok {
 			break
 		}
-		makerRemaining := e.remainingOf(maker.OrderId)
+		makerRemaining := book.remainingOfLocked(maker.OrderId)
 		if makerRemaining.Sign() <= 0 {
-			book.BuyOrders = append(book.BuyOrders[:idx], book.BuyOrders[idx+1:]...)
+			book.removeLocked(maker.OrderId)
 			continue
 		}
 		matchAmount := minBig(takerRemaining, makerRemaining)
@@ -833,30 +719,9 @@ func (e *MatchEngine) matchAgainstRestingLocked(book *OrderBook, taker *model.Or
 			break
 		}
 		takerRemaining.Sub(takerRemaining, matchAmount)
-		e.decreaseRestingLocked(book, "buy", idx, maker.OrderId, matchAmount)
+		book.applyFillLocked(maker.OrderId, matchAmount)
 	}
 	return takerRemaining
-}
-
-func (e *MatchEngine) nextMatchableMakerLocked(orders []*model.Order, taker *model.Order, takerPrice *big.Int, makerBuySide bool) (*model.Order, int, bool) {
-	for i, maker := range orders {
-		if maker == nil {
-			continue
-		}
-		if strings.EqualFold(maker.Signer, taker.Signer) {
-			continue
-		}
-		makerPrice := calculatePrice(maker)
-		if makerBuySide {
-			if makerPrice.Cmp(takerPrice) < 0 {
-				return nil, 0, false
-			}
-		} else if makerPrice.Cmp(takerPrice) > 0 {
-			return nil, 0, false
-		}
-		return maker, i, true
-	}
-	return nil, 0, false
 }
 
 func (e *MatchEngine) enqueueMatch(taker, maker *model.Order, amount, price *big.Int) (*MatchResult, error) {
@@ -883,84 +748,6 @@ func (e *MatchEngine) queuePendingTrade(result *MatchResult) {
 	e.tradeMu.Unlock()
 }
 
-func (e *MatchEngine) decreaseRestingLocked(book *OrderBook, side string, idx int, orderID string, amount *big.Int) {
-	e.remMu.Lock()
-	rem := e.remain[orderID]
-	if rem == nil {
-		e.remMu.Unlock()
-		return
-	}
-	rem.Sub(rem, amount)
-	filled := rem.Sign() <= 0
-	if filled {
-		delete(e.remain, orderID)
-	}
-	e.remMu.Unlock()
-
-	if filled {
-		switch side {
-		case "buy":
-			book.BuyOrders = append(book.BuyOrders[:idx], book.BuyOrders[idx+1:]...)
-		case "sell":
-			book.SellOrders = append(book.SellOrders[:idx], book.SellOrders[idx+1:]...)
-		}
-	}
-}
-
-func (e *MatchEngine) removeOrderFromBookLocked(book *OrderBook, orderID string) {
-	for i, o := range book.BuyOrders {
-		if o != nil && o.OrderId == orderID {
-			book.BuyOrders = append(book.BuyOrders[:i], book.BuyOrders[i+1:]...)
-			return
-		}
-	}
-	for i, o := range book.SellOrders {
-		if o != nil && o.OrderId == orderID {
-			book.SellOrders = append(book.SellOrders[:i], book.SellOrders[i+1:]...)
-			return
-		}
-	}
-}
-
-func (e *MatchEngine) remainingOf(orderID string) *big.Int {
-	e.remMu.Lock()
-	defer e.remMu.Unlock()
-	rem := e.remain[orderID]
-	if rem == nil {
-		return big.NewInt(0)
-	}
-	return new(big.Int).Set(rem)
-}
-
-func minBig(a, b *big.Int) *big.Int {
-	if a.Cmp(b) < 0 {
-		return new(big.Int).Set(a)
-	}
-	return new(big.Int).Set(b)
-}
-
-func parseBigInt(s string) *big.Int {
-	z := new(big.Int)
-	if _, ok := z.SetString(strings.TrimSpace(s), 10); !ok {
-		return big.NewInt(0)
-	}
-	return z
-}
-
-func (e *MatchEngine) orderInBook(book *OrderBook, orderID string) bool {
-	for _, o := range book.BuyOrders {
-		if o.OrderId == orderID {
-			return true
-		}
-	}
-	for _, o := range book.SellOrders {
-		if o.OrderId == orderID {
-			return true
-		}
-	}
-	return false
-}
-
 // match 执行撮合
 func (e *MatchEngine) match() {
 	e.mu.RLock()
@@ -971,73 +758,43 @@ func (e *MatchEngine) match() {
 	}
 }
 
-// matchOrderBook 撮合单个订单簿
+// matchOrderBook 撮合单个订单簿（最优买卖交叉）
 func (e *MatchEngine) matchOrderBook(book *OrderBook) {
 	book.mu.Lock()
 	defer book.mu.Unlock()
 
 	for {
-		e.pruneExpired(book)
-		if len(book.BuyOrders) == 0 || len(book.SellOrders) == 0 {
+		book.pruneExpiredLocked(time.Now().Unix(), func(o *model.Order) {
+			e.dropExpiredOrder(book, o)
+		})
+
+		bidEntry, askEntry, ok := book.bestCrossPairLocked()
+		if !ok {
 			break
 		}
 
-		buyOrder := book.BuyOrders[0]
-		sellOrder := book.SellOrders[0]
-
-		buyPrice := calculatePrice(buyOrder)
-		sellPrice := calculatePrice(sellOrder)
-
-		if buyPrice.Cmp(sellPrice) < 0 {
-			break
-		}
-
-		if strings.EqualFold(buyOrder.Signer, sellOrder.Signer) {
-			break
-		}
-
-		buyRem := e.remainingOf(buyOrder.OrderId)
-		sellRem := e.remainingOf(sellOrder.OrderId)
-
-		matchAmount := new(big.Int)
-		if buyRem.Cmp(sellRem) < 0 {
-			matchAmount.Set(buyRem)
-		} else {
-			matchAmount.Set(sellRem)
-		}
+		buyRem := book.remainingOfLocked(bidEntry.order.OrderId)
+		sellRem := book.remainingOfLocked(askEntry.order.OrderId)
+		matchAmount := minBig(buyRem, sellRem)
 		if matchAmount.Sign() == 0 {
 			break
 		}
 
-		takerOrder := buyOrder
-		makerOrder := sellOrder
-		makerPrice := sellPrice
-		if orderOlder(buyOrder, sellOrder) {
-			takerOrder = sellOrder
-			makerOrder = buyOrder
-			makerPrice = buyPrice
+		takerOrder := bidEntry.order
+		makerOrder := askEntry.order
+		makerPrice := askEntry.price
+		if orderOlder(bidEntry.order, askEntry.order) {
+			takerOrder = askEntry.order
+			makerOrder = bidEntry.order
+			makerPrice = bidEntry.price
 		}
 		if _, err := e.enqueueMatch(takerOrder, makerOrder, matchAmount, makerPrice); err != nil {
 			logx.Errorf("enqueue match failed: %v", err)
 			break
 		}
 
-		e.remMu.Lock()
-		if e.remain[buyOrder.OrderId] != nil {
-			e.remain[buyOrder.OrderId].Sub(e.remain[buyOrder.OrderId], matchAmount)
-		}
-		if e.remain[sellOrder.OrderId] != nil {
-			e.remain[sellOrder.OrderId].Sub(e.remain[sellOrder.OrderId], matchAmount)
-		}
-		if e.remain[buyOrder.OrderId] == nil || e.remain[buyOrder.OrderId].Sign() <= 0 {
-			book.BuyOrders = book.BuyOrders[1:]
-			delete(e.remain, buyOrder.OrderId)
-		}
-		if e.remain[sellOrder.OrderId] == nil || e.remain[sellOrder.OrderId].Sign() <= 0 {
-			book.SellOrders = book.SellOrders[1:]
-			delete(e.remain, sellOrder.OrderId)
-		}
-		e.remMu.Unlock()
+		book.applyFillLocked(bidEntry.order.OrderId, matchAmount)
+		book.applyFillLocked(askEntry.order.OrderId, matchAmount)
 	}
 }
 
@@ -1202,57 +959,32 @@ func (e *MatchEngine) applyRollbackMatch(trade *MatchResult, matchAmt *big.Int) 
 	book.mu.Lock()
 	defer book.mu.Unlock()
 
-	e.remMu.Lock()
-	for _, oid := range []string{trade.TakerOrder.OrderId, trade.MakerOrder.OrderId} {
-		if e.remain[oid] == nil {
-			e.remain[oid] = big.NewInt(0)
+	for _, order := range []*model.Order{trade.TakerOrder, trade.MakerOrder} {
+		if order == nil {
+			continue
 		}
-		e.remain[oid].Add(e.remain[oid], matchAmt)
-	}
-	e.remMu.Unlock()
-
-	if !e.orderInBook(book, trade.TakerOrder.OrderId) {
-		e.reinsertOrderLocked(book, trade.TakerOrder)
-	}
-	if !e.orderInBook(book, trade.MakerOrder.OrderId) {
-		e.reinsertOrderLocked(book, trade.MakerOrder)
+		if !book.hasOrderLocked(order.OrderId) {
+			book.insertRestingLocked(order, matchAmt)
+		} else {
+			book.addRemainLocked(order.OrderId, matchAmt)
+		}
 	}
 	logx.Infof("match rolled back in memory: taker=%s maker=%s amount=%s", trade.TakerOrder.OrderId, trade.MakerOrder.OrderId, matchAmt.String())
 }
 
-func (e *MatchEngine) reinsertOrderLocked(book *OrderBook, order *model.Order) {
-	e.insertRestingOrderLocked(book, order)
+func minBig(a, b *big.Int) *big.Int {
+	if a.Cmp(b) < 0 {
+		return new(big.Int).Set(a)
+	}
+	return new(big.Int).Set(b)
 }
 
-func (e *MatchEngine) insertRestingOrderLocked(book *OrderBook, order *model.Order) {
-	paperAmount := parseBigInt(order.PaperAmount)
-	if paperAmount.Sign() > 0 {
-		book.BuyOrders = append(book.BuyOrders, order)
-		sort.SliceStable(book.BuyOrders, func(i, j int) bool {
-			return bookOrderLess(book.BuyOrders[i], book.BuyOrders[j], true)
-		})
-	} else {
-		book.SellOrders = append(book.SellOrders, order)
-		sort.SliceStable(book.SellOrders, func(i, j int) bool {
-			return bookOrderLess(book.SellOrders[i], book.SellOrders[j], false)
-		})
+func parseBigInt(s string) *big.Int {
+	z := new(big.Int)
+	if _, ok := z.SetString(strings.TrimSpace(s), 10); !ok {
+		return big.NewInt(0)
 	}
-}
-
-func bookOrderLess(a, b *model.Order, buySide bool) bool {
-	priceA := calculatePrice(a)
-	priceB := calculatePrice(b)
-	cmp := priceA.Cmp(priceB)
-	if cmp != 0 {
-		if buySide {
-			return cmp > 0
-		}
-		return cmp < 0
-	}
-	if !a.CreateTime.Equal(b.CreateTime) {
-		return a.CreateTime.Before(b.CreateTime)
-	}
-	return a.OrderId < b.OrderId
+	return z
 }
 
 func orderOlder(a, b *model.Order) bool {
@@ -1358,66 +1090,7 @@ func (e *MatchEngine) SnapshotOrderBook(perp string, limit int) (bids, asks []sv
 		return nil, nil
 	}
 
-	book.mu.RLock()
-	defer book.mu.RUnlock()
-
-	e.remMu.Lock()
-	defer e.remMu.Unlock()
-
-	bidMap := aggregateBookLevels(book.BuyOrders, e.remain)
-	askMap := aggregateBookLevels(book.SellOrders, e.remain)
-
-	bids = levelsFromMap(bidMap, limit, true)
-	asks = levelsFromMap(askMap, limit, false)
-	return bids, asks
-}
-
-func aggregateBookLevels(orders []*model.Order, remain map[string]*big.Int) map[string]*big.Int {
-	out := make(map[string]*big.Int)
-	for _, o := range orders {
-		if o == nil {
-			continue
-		}
-		rem := remain[o.OrderId]
-		if rem == nil || rem.Sign() <= 0 {
-			continue
-		}
-		price := calculatePrice(o).String()
-		if out[price] == nil {
-			out[price] = new(big.Int)
-		}
-		out[price].Add(out[price], rem)
-	}
-	return out
-}
-
-func levelsFromMap(m map[string]*big.Int, limit int, desc bool) []svc.OrderBookLevel {
-	if len(m) == 0 {
-		return nil
-	}
-	prices := make([]string, 0, len(m))
-	for p := range m {
-		prices = append(prices, p)
-	}
-	sort.Slice(prices, func(i, j int) bool {
-		pi, _ := new(big.Int).SetString(prices[i], 10)
-		pj, _ := new(big.Int).SetString(prices[j], 10)
-		if desc {
-			return pi.Cmp(pj) > 0
-		}
-		return pi.Cmp(pj) < 0
-	})
-	if len(prices) > limit {
-		prices = prices[:limit]
-	}
-	out := make([]svc.OrderBookLevel, 0, len(prices))
-	for _, p := range prices {
-		out = append(out, svc.OrderBookLevel{
-			Price:  p,
-			Amount: m[p].String(),
-		})
-	}
-	return out
+	return book.snapshotBids(limit), book.snapshotAsks(limit)
 }
 
 func randomString(n int) string {

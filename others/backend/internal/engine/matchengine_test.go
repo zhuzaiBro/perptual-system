@@ -1,3 +1,6 @@
+// 撮合引擎单元测试（matchengine_test.go）
+//
+// 覆盖核心撮合语义与 Leader/Event 持久化路径，场景用例见 matchengine_scenarios_test.go。
 package engine
 
 import (
@@ -9,8 +12,10 @@ import (
 	"metanode/internal/model"
 )
 
+// testPerp 测试用永续合约地址（任意非空 hex 即可）。
 const testPerp = "0x0000000000000000000000000000000000000001"
 
+// newTestEngine 无 DB / 无 Redis / 无链的内存撮合引擎，AddOrder 同步入簿撮合。
 func newTestEngine() *MatchEngine {
 	return NewMatchEngine(config.MatchEngineConfig{
 		MatchInterval:    100,
@@ -19,6 +24,8 @@ func newTestEngine() *MatchEngine {
 	}, nil, nil, nil, nil, nil)
 }
 
+// testOrder 构造测试订单。
+// paper/credit 符号决定方向；CreateTime 影响同价 FIFO 排序。
 func testOrder(id, signer, paper, credit string, created time.Time) *model.Order {
 	return &model.Order{
 		OrderId:      id,
@@ -38,6 +45,7 @@ func testOrder(id, signer, paper, credit string, created time.Time) *model.Order
 	}
 }
 
+// pendingTrades 拷贝当前待上链成交队列（线程安全读取）。
 func pendingTrades(e *MatchEngine) []*MatchResult {
 	e.tradeMu.Lock()
 	defer e.tradeMu.Unlock()
@@ -46,6 +54,8 @@ func pendingTrades(e *MatchEngine) []*MatchResult {
 	return out
 }
 
+// TestIncomingBuyIsTakerAgainstRestingSell
+// 先挂卖后挂买：后到的买单为 taker，卖单为 maker，全量成交。
 func TestIncomingBuyIsTakerAgainstRestingSell(t *testing.T) {
 	e := newTestEngine()
 	now := time.Now()
@@ -67,6 +77,8 @@ func TestIncomingBuyIsTakerAgainstRestingSell(t *testing.T) {
 	}
 }
 
+// TestIncomingSellIsTakerAgainstRestingBuy
+// 先挂买后挂卖：卖单为 taker；成交价应为 maker（买）的价格。
 func TestIncomingSellIsTakerAgainstRestingBuy(t *testing.T) {
 	e := newTestEngine()
 	now := time.Now()
@@ -88,6 +100,8 @@ func TestIncomingSellIsTakerAgainstRestingBuy(t *testing.T) {
 	}
 }
 
+// TestSamePriceUsesTimePriority
+// 同价两笔卖单：尽管 sell-new 先 add，sell-old 的 CreateTime 更早，应作为 maker 先成交。
 func TestSamePriceUsesTimePriority(t *testing.T) {
 	e := newTestEngine()
 	now := time.Now()
@@ -108,6 +122,8 @@ func TestSamePriceUsesTimePriority(t *testing.T) {
 	}
 }
 
+// TestSelfMatchIsSkipped
+// 同一 signer 的卖单在队首时跳过，与第三方卖单成交。
 func TestSelfMatchIsSkipped(t *testing.T) {
 	e := newTestEngine()
 	now := time.Now()
@@ -128,6 +144,8 @@ func TestSelfMatchIsSkipped(t *testing.T) {
 	}
 }
 
+// TestRemoveOrderRemovesResidualFromBook
+// RemoveOrder 后深度应为空（价档+索引结构下 O(1) 撤单）。
 func TestRemoveOrderRemovesResidualFromBook(t *testing.T) {
 	e := newTestEngine()
 	now := time.Now()
@@ -143,6 +161,8 @@ func TestRemoveOrderRemovesResidualFromBook(t *testing.T) {
 	}
 }
 
+// TestOrderAcceptedEventCanBeReplayed
+// 单机回放 order_accepted 事件后，订单应出现在簿上。
 func TestOrderAcceptedEventCanBeReplayed(t *testing.T) {
 	store := newMemoryEngineEventStore()
 	e := NewMatchEngine(config.MatchEngineConfig{}, nil, nil, store, nil, nil)
@@ -167,6 +187,8 @@ func TestOrderAcceptedEventCanBeReplayed(t *testing.T) {
 	}
 }
 
+// TestAddOrderWithEventStoreOnlyMutatesBookAfterEventConsumption
+// 生产路径：AddOrder 只写 WAL，Leader 消费 event 后才改内存簿。
 func TestAddOrderWithEventStoreOnlyMutatesBookAfterEventConsumption(t *testing.T) {
 	store := newMemoryEngineEventStore()
 	e := NewMatchEngine(config.MatchEngineConfig{}, nil, nil, store, nil, nil)
@@ -191,6 +213,8 @@ func TestAddOrderWithEventStoreOnlyMutatesBookAfterEventConsumption(t *testing.T
 	}
 }
 
+// TestUnresolvedMatchRestoresPendingTradeAndReservation
+// 重启恢复：未 settled 的 match_enqueued 应回到 pendingTrades，且簿内 remain 已预扣。
 func TestUnresolvedMatchRestoresPendingTradeAndReservation(t *testing.T) {
 	store := newMemoryEngineEventStore()
 	now := time.Now()
@@ -223,6 +247,7 @@ func TestUnresolvedMatchRestoresPendingTradeAndReservation(t *testing.T) {
 	}
 }
 
+// mustAddOrder 测试用下单入口（无 eventModel 时同步撮合）。
 func mustAddOrder(t *testing.T, e *MatchEngine, order *model.Order) {
 	t.Helper()
 	if err := e.AddOrder(order); err != nil {
@@ -230,6 +255,7 @@ func mustAddOrder(t *testing.T, e *MatchEngine, order *model.Order) {
 	}
 }
 
+// memoryEngineEventStore 内存版 EngineEvent 存储，用于 WAL 回放测试。
 type memoryEngineEventStore struct {
 	events []*model.EngineEvent
 }
@@ -263,6 +289,7 @@ func (s *memoryEngineEventStore) ListAfter(_ context.Context, seq int64, limit i
 	return out, nil
 }
 
+// FindUnresolvedMatches 返回已 enqueue 但未 settled/rollback 的成交事件。
 func (s *memoryEngineEventStore) FindUnresolvedMatches(_ context.Context, limit int) ([]*model.EngineEvent, error) {
 	done := make(map[string]bool)
 	for _, ev := range s.events {
