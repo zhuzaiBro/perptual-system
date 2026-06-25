@@ -8,11 +8,11 @@ import { useAccount } from "wagmi";
 import {
   fetchMetanodeBalance,
   fetchMetanodeDeposits,
-  hasMetanodeAuthSession,
   METANODE_API_BASE,
   type AccountBalanceDTO,
   type DepositRecordDTO,
 } from "@/lib/metanode-api";
+import { useMetanodeAuth } from "@/lib/useMetanodeAuth";
 import { resolveTreasuryAddress } from "@/lib/sepoliaTestUsdc";
 import UsdcDepositModal from "@/components/UsdcDepositModal";
 import DealerDepositModal from "@/components/DealerDepositModal";
@@ -67,10 +67,7 @@ export default function UserProfile({ onBack }: Props) {
 
   const treasury = resolveTreasuryAddress();
 
-  const sessionOk = useMemo(() => {
-    if (!address || !isConnected) return false;
-    return hasMetanodeAuthSession(address);
-  }, [address, isConnected]);
+  const { sessionOk, authPending } = useMetanodeAuth(address);
 
   const applyAccountData = useCallback(
     (b: Awaited<ReturnType<typeof fetchMetanodeBalance>>, d: Awaited<ReturnType<typeof fetchMetanodeDeposits>>) => {
@@ -207,8 +204,9 @@ export default function UserProfile({ onBack }: Props) {
                 <h2 className="text-sm font-semibold text-white">钱包地址</h2>
                 {!sessionOk ? (
                   <span className="text-xs text-amber-400">
-                    会话未就绪：请等待签名登录完成或刷新页面（API{" "}
-                    {METANODE_API_BASE}）
+                    {authPending
+                      ? "MetaNode 登录中，请在钱包完成登录签名…"
+                      : `会话未就绪：请刷新页面并在钱包完成 MetaNode 登录签名（API ${METANODE_API_BASE}）`}
                   </span>
                 ) : (
                   <span className="text-xs text-emerald-400/90">已登录</span>

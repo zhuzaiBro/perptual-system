@@ -89,6 +89,45 @@ export function hasMetanodeAuthSession(currentAddress: string): boolean {
   return Boolean(getMetanodeToken()) && sessionMatchesWallet(currentAddress);
 }
 
+export const METANODE_AUTH_CHANGE = "metanode-auth-change";
+
+export type MetanodeAuthPhase = "idle" | "pending" | "ready";
+
+let metanodeAuthPhase: MetanodeAuthPhase = "idle";
+
+export function getMetanodeAuthPhase(): MetanodeAuthPhase {
+  return metanodeAuthPhase;
+}
+
+export function setMetanodeAuthPhase(phase: MetanodeAuthPhase): void {
+  if (metanodeAuthPhase === phase) return;
+  metanodeAuthPhase = phase;
+  notifyMetanodeAuthChange();
+}
+
+const authChangeListeners = new Set<() => void>();
+
+/** localStorage token / 登录阶段变化时通知 React 订阅方 */
+export function notifyMetanodeAuthChange(): void {
+  authChangeListeners.forEach((fn) => fn());
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(METANODE_AUTH_CHANGE));
+  }
+}
+
+export function subscribeMetanodeAuth(onChange: () => void): () => void {
+  authChangeListeners.add(onChange);
+  if (typeof window !== "undefined") {
+    window.addEventListener(METANODE_AUTH_CHANGE, onChange);
+  }
+  return () => {
+    authChangeListeners.delete(onChange);
+    if (typeof window !== "undefined") {
+      window.removeEventListener(METANODE_AUTH_CHANGE, onChange);
+    }
+  };
+}
+
 export function setMetanodeSession(
   token: string,
   expiresAtUnix?: number,
@@ -109,6 +148,7 @@ export function setMetanodeSession(
   if (walletLower) {
     localStorage.setItem(METANODE_AUTH_WALLET_KEY, walletLower.trim().toLowerCase());
   }
+  setMetanodeAuthPhase("ready");
 }
 
 export function clearMetanodeToken(): void {
@@ -116,6 +156,8 @@ export function clearMetanodeToken(): void {
   localStorage.removeItem(METANODE_TOKEN_KEY);
   localStorage.removeItem(METANODE_TOKEN_EXP_KEY);
   localStorage.removeItem(METANODE_AUTH_WALLET_KEY);
+  setMetanodeAuthPhase("idle");
+  notifyMetanodeAuthChange();
 }
 
 export type AuthNonceResp = {

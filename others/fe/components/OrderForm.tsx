@@ -9,6 +9,7 @@ import {
   hasMetanodeAuthSession,
   postMetanodeOrder,
 } from "@/lib/metanode-api";
+import { useMetanodeAuth } from "@/lib/useMetanodeAuth";
 import {
   markPriceToUsd,
   type MetaNodeMarket,
@@ -109,7 +110,7 @@ export default function OrderForm({
   const [panelMode, setPanelMode] = useState<"open" | "close">("open");
   const isCloseMode = panelMode === "close" || Boolean(closeDraft);
   const onSepolia = chainId === sepolia.id;
-  const sessionOk = Boolean(address) && hasMetanodeAuthSession(address);
+  const { sessionOk, authPending } = useMetanodeAuth(address);
 
   const selectedMarket = markets.find(
     (m) => m.address.toLowerCase() === selectedPerp.toLowerCase()
@@ -228,8 +229,12 @@ export default function OrderForm({
       setErr("请切换到 Sepolia");
       return;
     }
-    if (!sessionOk) {
-      setErr("MetaNode 登录未完成，请等待签名或刷新");
+    if (!hasMetanodeAuthSession(address)) {
+      setErr(
+        authPending
+          ? "MetaNode 登录进行中，请先在钱包完成登录签名（与连接钱包不同）"
+          : "MetaNode 登录未完成：请刷新页面，并在钱包中完成 MetaNode 登录签名后再平仓"
+      );
       return;
     }
     if (!amount.trim() || !price.trim()) {
@@ -284,7 +289,7 @@ export default function OrderForm({
     address,
     isConnected,
     onSepolia,
-    sessionOk,
+    authPending,
     amount,
     price,
     selectedPerp,
@@ -607,6 +612,11 @@ export default function OrderForm({
           </p>
         )}
 
+        {authPending && isConnected ? (
+          <p className="text-xs text-amber-400/90">
+            MetaNode 登录中，请在钱包中完成登录签名…
+          </p>
+        ) : null}
         {err ? <p className="text-xs text-red-400">{err}</p> : null}
         {msg ? <p className="text-xs text-emerald-400">{msg}</p> : null}
 
@@ -615,6 +625,7 @@ export default function OrderForm({
           disabled={
             submitting ||
             !isConnected ||
+            authPending ||
             (panelMode === "close" && !closeDraft && !amount) ||
             (!isCloseMode && (creditInsufficient || leverageTooLowForChain))
           }

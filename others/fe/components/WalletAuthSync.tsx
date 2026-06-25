@@ -8,7 +8,7 @@ import {
   METANODE_API_BASE,
   postAuthNonce,
   postAuthVerify,
-  sessionMatchesWallet,
+  setMetanodeAuthPhase,
   setMetanodeSession,
   setMetanodeUnauthorizedHandler,
 } from "@/lib/metanode-api";
@@ -43,9 +43,13 @@ export default function WalletAuthSync() {
 
     const runLogin = async () => {
       if (cancelled || inFlight.current || !address) return;
-      if (!needsLogin()) return;
+      if (!needsLogin()) {
+        setMetanodeAuthPhase("ready");
+        return;
+      }
 
       inFlight.current = true;
+      setMetanodeAuthPhase("pending");
       try {
         const n = await postAuthNonce(address);
         if (cancelled) return;
@@ -55,6 +59,7 @@ export default function WalletAuthSync() {
             n.message ?? "unknown",
             `(${METANODE_API_BASE})`
           );
+          setMetanodeAuthPhase("idle");
           return;
         }
 
@@ -67,6 +72,7 @@ export default function WalletAuthSync() {
         if (cancelled) return;
         if (v.code !== 0 || !v.token) {
           console.warn("[MetaNode auth] verify failed:", v.message ?? "unknown");
+          setMetanodeAuthPhase("idle");
           return;
         }
 
@@ -74,6 +80,7 @@ export default function WalletAuthSync() {
       } catch (e) {
         if (!cancelled) {
           console.warn("[MetaNode auth]", e instanceof Error ? e.message : e);
+          setMetanodeAuthPhase("idle");
         }
       } finally {
         inFlight.current = false;
