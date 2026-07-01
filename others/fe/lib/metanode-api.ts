@@ -242,7 +242,18 @@ async function metanodeAuthRequest<T extends { code?: number }>(
     headers,
     cache: "no-store",
   });
-  const data = (await res.json()) as T;
+  const text = await res.text();
+  let data: T;
+  try {
+    data = (text ? JSON.parse(text) : {}) as T;
+  } catch {
+    if (res.status === 503 && text.includes("Request Timeout")) {
+      throw new Error(
+        "后端处理超时（Supabase 跨境延迟），请稍后刷新订单列表；若重复提交提示已存在则说明已成功"
+      );
+    }
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
   if (isUnauthorizedResponse(res, data)) {
     clearMetanodeToken();
     notifyUnauthorized();
@@ -473,7 +484,7 @@ export type GetOpenQuoteRespDTO = {
   quote: OpenQuoteDTO;
 };
 
-/** 开仓系统价：long=卖一，short=买一；前端直接用 quote.priceUsd 下单，无需用户出价 */
+/** 开仓系统价：long=卖一，short=买一 */
 export async function fetchMetanodeOpenQuote(
   perp: string,
   side: "long" | "short"
@@ -483,6 +494,58 @@ export async function fetchMetanodeOpenQuote(
     cache: "no-store",
   });
   return (await res.json()) as GetOpenQuoteRespDTO;
+}
+
+export type OrderPreviewFillDTO = {
+  priceUsd: string;
+  priceRaw: string;
+  amount: string;
+  amountRaw: string;
+};
+
+export type OrderPreviewDTO = {
+  perp: string;
+  side: string;
+  slippageBps: number;
+  referencePriceUsd: string;
+  referencePriceRaw: string;
+  referenceSource: string;
+  limitPriceUsd: string;
+  limitPriceRaw: string;
+  requestedSize: string;
+  filledSize: string;
+  unfilledSize: string;
+  avgFillPriceUsd: string;
+  worstFillPriceUsd: string;
+  fullyFillable: boolean;
+  fills: OrderPreviewFillDTO[];
+};
+
+export type GetOrderPreviewRespDTO = {
+  code: number;
+  message: string;
+  preview: OrderPreviewDTO;
+};
+
+/** 下单前滑点/深度模拟（签名限价 = 参考价 ± slippageBps） */
+export async function fetchMetanodeOrderPreview(
+  perp: string,
+  side: "long" | "short",
+  size: string,
+  slippageBps: number,
+  signer?: string
+): Promise<GetOrderPreviewRespDTO> {
+  const q = new URLSearchParams({
+    perp,
+    side,
+    size,
+    slippageBps: String(slippageBps),
+  });
+  if (signer) q.set("signer", signer);
+  const res = await fetch(`${METANODE_API_BASE}/api/v1/order-preview?${q}`, {
+    cache: "no-store",
+  });
+  return (await res.json()) as GetOrderPreviewRespDTO;
 }
 
 export async function fetchMetanodePositions(

@@ -6,10 +6,21 @@ import { useAccount, useChainId, useReadContract, useSignTypedData } from "wagmi
 import { sepolia } from "wagmi/chains";
 import {
   fetchMetanodeOpenQuote,
+  fetchMetanodeOrderPreview,
   hasMetanodeAuthSession,
   postMetanodeOrder,
+  type OrderPreviewDTO,
 } from "@/lib/metanode-api";
 import { useMetanodeAuth } from "@/lib/useMetanodeAuth";
+import {
+  applySlippageLimitPriceUsd,
+  loadStoredSlippageBps,
+  manualPriceExceedsSlippage,
+  normalizeSlippageBps,
+  saveStoredSlippageBps,
+  SLIPPAGE_PRESETS_BPS,
+  slippagePercentLabel,
+} from "@/lib/slippage";
 import {
   markPriceToUsd,
   type MetaNodeMarket,
@@ -103,6 +114,11 @@ export default function OrderForm({
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [referencePriceUsd, setReferencePriceUsd] = useState("");
+  const [signLimitPriceUsd, setSignLimitPriceUsd] = useState("");
+  const [slippageBps, setSlippageBps] = useState(loadStoredSlippageBps);
+  const [preview, setPreview] = useState<OrderPreviewDTO | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -134,45 +150,152 @@ export default function OrderForm({
     saveStoredLeverage(selectedPerp, next);
   };
 
-  useEffect(() => {
-    if (!closeDraft) return;
-    setPanelMode("close");
-    setSide(closeDraft.side);
-    setAmount(closeDraft.size);
-    setPrice(closeDraft.priceUsd);
-    setOpenPriceSource("close");
-    onCloseDraftApplied?.();
-  }, [closeDraft, onCloseDraftApplied]);
+  const applyReferencePrice = useCallback(
+    (refUsd: string, source: string) => {
+      setReferencePriceUsd(refUsd);
+      setOpenPriceSource(source);
+      const limit = applySlippageLimitPriceUsd(refUsd, side, slippageBps);
+      setSignLimitPriceUsd(limit);
+      setPrice(refUsd);
+    },
+    [side, slippageBps]
+  );
 
   const refreshSystemQuote = useCallback(async () => {
     setQuoteLoading(true);
     try {
       const resp = await fetchMetanodeOpenQuote(selectedPerp, side);
       if (resp.code === 0 && resp.quote?.priceUsd) {
-        setPrice(resp.quote.priceUsd);
-        setOpenPriceSource(resp.quote.source ?? "");
+        applyReferencePrice(resp.quote.priceUsd, resp.quote.source ?? "");
         return;
       }
       if (markUsd > 0) {
-        setPrice(formatNumber(markUsd, 2));
-        setOpenPriceSource("mark_fallback");
+        applyReferencePrice(formatNumber(markUsd, 2), "mark_fallback");
       }
     } catch {
       if (markUsd > 0) {
-        setPrice(formatNumber(markUsd, 2));
-        setOpenPriceSource("mark_fallback");
+        applyReferencePrice(formatNumber(markUsd, 2), "mark_fallback");
       }
     } finally {
       setQuoteLoading(false);
     }
-  }, [selectedPerp, side, markUsd]);
+  }, [selectedPerp, side, markUsd, applyReferencePrice]);
+
+  useEffect(() => {
+    if (!closeDraft) return;
+    setPanelMode("close");
+    setSide(closeDraft.side);
+    setAmount(closeDraft.size);
+    setOpenPriceMode("system");
+    void refreshSystemQuote();
+    onCloseDraftApplied?.();
+  }, [closeDraft, onCloseDraftApplied, refreshSystemQuote]);
+
+  useEffect(() => {
+    if (referencePriceUsd) {
+      setSignLimitPriceUsd(
+        applySlippageLimitPriceUsd(referencePriceUsd, side, slippageBps)
+      );
+    }
+  }, [slippageBps, referencePriceUsd, side]);
+
+  useEffect(() => {
+    if (!amount.trim()) {
+      setPreview(null);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      setPreviewLoading(true);
+      try {
+        const resp = await fetchMetanodeOrderPreview(
+          selectedPerp,
+          side,
+          amount.trim(),
+          slippageBps,
+          address
+        );
+        if (resp.code === 0 && resp.preview) {
+          setPreview(resp.preview);
+          if (resp.preview.referencePriceUsd) {
+            setReferencePriceUsd(resp.preview.referencePriceUsd);
+            setSignLimitPriceUsd(resp.preview.limitPriceUsd);
+          }
+        } else {
+          setPreview(null);
+        }
+      } catch {
+        setPreview(null);
+      } finally {
+        setPreviewLoading(false);
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [selectedPerp, side, amount, slippageBps, address]);
 
   useEffect(() => {
     if (isCloseMode || openPriceMode !== "system") return;
     void refreshSystemQuote();
   }, [isCloseMode, openPriceMode, refreshSystemQuote]);
 
-  const useSystemOpenPrice = !isCloseMode && openPriceMode === "system";
+  useEffect(() => {
+    if (openPriceMode === "system" && !isCloseMode) return;
+    void (async () => {
+      try {
+        const resp = await fetchMetanodeOpenQuote(selectedPerp, side);
+        if (resp.code === 0 && resp.quote?.priceUsd) {
+          setReferencePriceUsd(resp.quote.priceUsd);
+          setOpenPriceSource(resp.quote.source ?? "");
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [selectedPerp, side, openPriceMode, isCloseMode]);
+
+  const handleSlippageChange = (bps: number) => {
+    const next = normalizeSlippageBps(bps);
+    setSlippageBps(next);
+    saveStoredSlippageBps(next);
+  };
+
+  const resolveSignPriceUsd = useCallback((): string | null => {
+    if (!isCloseMode && openPriceMode === "manual") {
+      const manual = price.trim();
+      if (
+        referencePriceUsd &&
+        manualPriceExceedsSlippage(
+          manual,
+          referencePriceUsd,
+          side,
+          slippageBps
+        )
+      ) {
+        return null;
+      }
+      return manual;
+    }
+    if (signLimitPriceUsd.trim()) return signLimitPriceUsd.trim();
+    if (referencePriceUsd.trim()) {
+      return applySlippageLimitPriceUsd(
+        referencePriceUsd,
+        side,
+        slippageBps
+      );
+    }
+    return price.trim() || null;
+  }, [
+    isCloseMode,
+    openPriceMode,
+    price,
+    referencePriceUsd,
+    side,
+    slippageBps,
+    signLimitPriceUsd,
+  ]);
+
+  const useSystemOpenPrice =
+    (!isCloseMode && openPriceMode === "system") ||
+    (isCloseMode && Boolean(closeDraft));
 
   const notional = useMemo(() => {
     const p = Number(price) || markUsd || 0;
@@ -241,6 +364,13 @@ export default function OrderForm({
       setErr("请填写数量与价格");
       return;
     }
+    const signPriceUsd = resolveSignPriceUsd();
+    if (!signPriceUsd) {
+      setErr(
+        `手动限价超出滑点保护（${slippagePercentLabel(slippageBps)}），请提高滑点或调整价格`
+      );
+      return;
+    }
     if (!isCloseMode && leverage > maxLeverageNum) {
       setErr(`杠杆不能超过该合约最大 ${maxLeverageNum}x`);
       return;
@@ -265,7 +395,7 @@ export default function OrderForm({
         signer: address,
         side,
         size: amount.trim(),
-        priceUsd: price.trim(),
+        priceUsd: signPriceUsd,
       });
       const typed = orderTypedData(order);
       const signature = await signTypedDataAsync(typed);
@@ -290,6 +420,8 @@ export default function OrderForm({
     isConnected,
     onSepolia,
     authPending,
+    resolveSignPriceUsd,
+    slippageBps,
     amount,
     price,
     selectedPerp,
@@ -482,6 +614,15 @@ export default function OrderForm({
                 默认：做多取卖一，做空取买一
               </p>
             ) : null}
+            {signLimitPriceUsd ? (
+              <p className="mt-2 text-[11px] text-amber-300/90">
+                签名限价（含 {slippagePercentLabel(slippageBps)} 滑点保护）：{" "}
+                <span className="font-mono text-foreground">
+                  {formatNumber(Number(signLimitPriceUsd), 2)}
+                </span>{" "}
+                USDT
+              </p>
+            ) : null}
           </div>
         ) : (
           <label className="block text-xs text-subtle">
@@ -507,6 +648,36 @@ export default function OrderForm({
             ) : null}
           </label>
         )}
+
+        <div className="space-y-2 rounded-lg border border-panelBorder bg-elevated px-3 py-2.5">
+          <div className="flex items-center justify-between text-xs text-subtle">
+            <span>滑点保护</span>
+            <span className="font-mono text-accent">
+              {slippagePercentLabel(slippageBps)}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {SLIPPAGE_PRESETS_BPS.map((bps) => (
+              <button
+                key={bps}
+                type="button"
+                onClick={() => handleSlippageChange(bps)}
+                className={`min-w-[2.75rem] rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                  slippageBps === bps
+                    ? "bg-accent text-black"
+                    : "bg-surface text-muted hover:text-foreground"
+                }`}
+              >
+                {(bps / 100).toFixed(1)}%
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] leading-relaxed text-faint">
+            签名限价为参考价
+            {side === "long" ? "向上" : "向下"}放宽 {slippagePercentLabel(slippageBps)}
+            ；链上成交价不会劣于该限价。
+          </p>
+        </div>
 
         <div className="flex items-center justify-between text-xs text-subtle">
           <span>标记价</span>
@@ -539,6 +710,38 @@ export default function OrderForm({
             className="w-full rounded-lg border border-panelBorder bg-elevated px-3 py-2.5 text-sm text-foreground outline-none focus:border-accent/50"
           />
         </label>
+
+        {amount.trim() ? (
+          <div className="rounded-lg border border-panelBorder bg-elevated px-3 py-2 text-[11px] text-subtle">
+            <div className="flex items-center justify-between">
+              <span>深度模拟</span>
+              <span>{previewLoading ? "计算中…" : preview ? "已更新" : "—"}</span>
+            </div>
+            {preview ? (
+              <div className="mt-2 space-y-1 font-mono text-foreground">
+                <div className="flex justify-between">
+                  <span className="text-subtle font-sans">预估成交均价</span>
+                  <span>{preview.avgFillPriceUsd || "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-subtle font-sans">最差成交价</span>
+                  <span>{preview.worstFillPriceUsd || "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-subtle font-sans">预计成交</span>
+                  <span>
+                    {preview.filledSize} / {preview.requestedSize}
+                  </span>
+                </div>
+                {Number(preview.unfilledSize) > 0 ? (
+                  <p className="pt-1 font-sans text-amber-300/90">
+                    剩余 {preview.unfilledSize} 将在限价内挂簿等待
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="rounded-lg border border-panelBorder bg-elevated px-3 py-2 text-xs text-subtle">
           <div className="flex justify-between">
@@ -604,11 +807,11 @@ export default function OrderForm({
           </p>
         ) : useSystemOpenPrice ? (
           <p className="text-[11px] leading-relaxed text-subtle">
-            系统价由后端按订单簿查询（做多=卖一、做空=买一），切换方向会自动刷新。
+            参考价来自订单簿；实际签名限价为参考价 ± 滑点保护，链上不会比限价更差。
           </p>
         ) : (
           <p className="text-[11px] leading-relaxed text-subtle">
-            限价由您自行填写，将按该价格签名挂单；可与系统价不一致。
+            限价由您自行填写；若超出滑点保护范围将无法提交。
           </p>
         )}
 

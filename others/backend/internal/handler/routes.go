@@ -116,6 +116,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: market.GetOpenQuoteHandler(serverCtx),
 			},
 			{
+				// 下单前滑点/深度模拟
+				Method:  http.MethodGet,
+				Path:    "/order-preview",
+				Handler: market.GetOrderPreviewHandler(serverCtx),
+			},
+			{
 				// 获取深度
 				Method:  http.MethodGet,
 				Path:    "/orderbook",

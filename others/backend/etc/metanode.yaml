@@ -4,6 +4,10 @@ Name: metanode
 Host: 0.0.0.0
 Port: 28888
 
+# HTTP 请求超时（毫秒）。go-zero 默认 3000ms；CreateOrder 需多次访问 Supabase，
+# 跨境延迟下易触发 503 + "Request Timeout"，生产建议 30000 及以上。
+Timeout: 30000
+
 # 日志配置
 Log:
   ServiceName: metanode

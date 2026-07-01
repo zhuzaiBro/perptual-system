@@ -461,3 +461,43 @@ type GetOpenQuoteResp struct {
 	Message string    `json:"message"`
 	Quote   OpenQuote `json:"quote"`
 }
+
+// GetOrderPreviewReq 下单前滑点/深度模拟。
+type GetOrderPreviewReq struct {
+	Perp        string `form:"perp"`
+	Side        string `form:"side"`        // long | short
+	Size        string `form:"size"`        // 人类可读数量，如 0.01
+	SlippageBps int    `form:"slippageBps,optional"`
+	Signer      string `form:"signer,optional"` // 自成交过滤
+}
+
+type OrderPreviewFill struct {
+	PriceUsd   string `json:"priceUsd"`
+	PriceRaw   string `json:"priceRaw"`
+	Amount     string `json:"amount"` // 人类可读 paper
+	AmountRaw  string `json:"amountRaw"`
+}
+
+type OrderPreview struct {
+	Perp               string             `json:"perp"`
+	Side               string             `json:"side"`
+	SlippageBps        int                `json:"slippageBps"`
+	ReferencePriceUsd  string             `json:"referencePriceUsd"`
+	ReferencePriceRaw  string             `json:"referencePriceRaw"`
+	ReferenceSource    string             `json:"referenceSource"`
+	LimitPriceUsd      string             `json:"limitPriceUsd"`
+	LimitPriceRaw      string             `json:"limitPriceRaw"`
+	RequestedSize      string             `json:"requestedSize"`
+	FilledSize         string             `json:"filledSize"`
+	UnfilledSize       string             `json:"unfilledSize"`
+	AvgFillPriceUsd    string             `json:"avgFillPriceUsd"`
+	WorstFillPriceUsd  string             `json:"worstFillPriceUsd"`
+	FullyFillable      bool               `json:"fullyFillable"`
+	Fills              []OrderPreviewFill `json:"fills"`
+}
+
+type GetOrderPreviewResp struct {
+	Code    int          `json:"code"`
+	Message string       `json:"message"`
+	Preview OrderPreview `json:"preview"`
+}

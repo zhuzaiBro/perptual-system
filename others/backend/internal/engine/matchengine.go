@@ -1093,6 +1093,21 @@ func (e *MatchEngine) SnapshotOrderBook(perp string, limit int) (bids, asks []sv
 	return book.snapshotBids(limit), book.snapshotAsks(limit)
 }
 
+// SimulateTakerFill 按当前内存簿模拟 taker 吃单（不修改簿）。
+func (e *MatchEngine) SimulateTakerFill(perp string, takerIsBuy bool, sizePaper, limitPrice *big.Int, skipSigner string) FillSimulation {
+	perp = strings.TrimSpace(perp)
+	if perp == "" || sizePaper == nil {
+		return FillSimulation{UnfilledPaper: big.NewInt(0)}
+	}
+	e.mu.RLock()
+	book := e.orderBooks[perp]
+	e.mu.RUnlock()
+	if book == nil {
+		return FillSimulation{UnfilledPaper: new(big.Int).Set(sizePaper)}
+	}
+	return book.SimulateTakerFill(takerIsBuy, sizePaper, limitPrice, skipSigner)
+}
+
 func randomString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
