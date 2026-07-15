@@ -4,18 +4,18 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        page: "#0d1219",
-        surface: "#121a28",
-        elevated: "#1a2436",
-        panel: "#161f30",
-        panelBorder: "#2d3d56",
-        foreground: "#f0f4fc",
-        muted: "#c8d4e6",
-        subtle: "#9eb0c8",
-        faint: "#7d92ad",
-        accent: "#B6F906",
-        buy: "#22c55e",
-        sell: "#ef4444"
+        page: "#050809",
+        surface: "#080c0e",
+        elevated: "#101618",
+        panel: "#0a0f11",
+        panelBorder: "#1d272b",
+        foreground: "#f1f4f4",
+        muted: "#a9b3b5",
+        subtle: "#747f82",
+        faint: "#505b5e",
+        accent: "#16d8d4",
+        buy: "#2ecb8b",
+        sell: "#f05b78"
       }
     }
   },

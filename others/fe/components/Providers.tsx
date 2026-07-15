@@ -24,7 +24,7 @@ const sepoliaRpc =
     : DEFAULT_SEPOLIA_RPC;
 
 const config = getDefaultConfig({
-  appName: "Perp Detail",
+  appName: "MetaNode Perpetual",
   projectId: "YOUR_PROJECT_ID", // TODO: Get a project ID from https://cloud.walletconnect.com
   chains: [sepolia, base],
   transports: {
@@ -42,9 +42,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider 
             theme={darkTheme({
-                accentColor: '#B6F906',
+                accentColor: '#16D8D4',
                 accentColorForeground: 'black',
-                borderRadius: 'medium',
+                borderRadius: 'small',
                 overlayBlur: 'small',
             })}
         >

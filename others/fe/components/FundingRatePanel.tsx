@@ -19,7 +19,8 @@ type Props = {
 export default function FundingRatePanel({ perp, compact = false }: Props) {
   const [latest, setLatest] = useState<FundingRateLatestDTO | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  // 服务端与客户端首帧保持一致，挂载后再启动倒计时，避免 hydration 抖动。
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
     if (!perp) return;
@@ -48,6 +49,7 @@ export default function FundingRatePanel({ perp, compact = false }: Props) {
   }, [perp]);
 
   useEffect(() => {
+    setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
@@ -56,10 +58,10 @@ export default function FundingRatePanel({ perp, compact = false }: Props) {
     if (latest?.nextSettleAt && latest.nextSettleAt > 0) {
       return latest.nextSettleAt * 1000;
     }
-    return nextFundingSettleMsClient(now);
+    return now == null ? 0 : nextFundingSettleMsClient(now);
   }, [latest?.nextSettleAt, now]);
 
-  const countdown = formatCountdown(nextMs - now);
+  const countdown = now == null ? "--:--:--" : formatCountdown(nextMs - now);
 
   const periodPct =
     latest?.periodRateSource === "last_settle"

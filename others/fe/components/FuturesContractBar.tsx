@@ -5,9 +5,13 @@ import { formatNumber } from "@/lib/format";
 import { formatLeverageLabel, resolveMarketRisk } from "@/lib/leverage";
 import { markPriceToUsd } from "@/lib/metanode-markets";
 import type { PerpMarketDTO } from "@/lib/metanode-api";
+import { ChevronDownIcon } from "@heroicons/react/24/outline";
 
 type Props = {
   market: PerpMarketDTO | undefined;
+  markets?: PerpMarketDTO[];
+  selectedPerp?: string;
+  onSelectPerp?: (address: string) => void;
   indexPriceUsd: number;
   /** 订单簿多空数量比（0–100，无数据为 undefined） */
   bidSharePct?: number;
@@ -15,6 +19,9 @@ type Props = {
 
 export default function FuturesContractBar({
   market,
+  markets = [],
+  selectedPerp,
+  onSelectPerp,
   indexPriceUsd,
   bidSharePct,
 }: Props) {
@@ -30,44 +37,61 @@ export default function FuturesContractBar({
   const leverageLabel = formatLeverageLabel(risk.maxLeverage);
 
   return (
-    <div className="border-b border-panelBorder bg-surface px-3 py-3 sm:px-4">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs text-subtle">
-            <span className="rounded bg-elevated px-2 py-0.5 font-medium text-muted">
-              永续
-            </span>
-            <span className="text-muted">USDC 保证金</span>
-            <span className="text-faint">·</span>
-            <span className="text-emerald-400">Sepolia</span>
-            {leverageLabel !== "—" ? (
-              <>
-                <span className="text-faint">·</span>
-                <span className="rounded bg-accent/10 px-2 py-0.5 font-semibold text-accent">
-                  {leverageLabel}
-                </span>
-              </>
-            ) : null}
+    <div className="border-b border-panelBorder bg-surface px-3 sm:px-5">
+      <div className="mx-auto flex max-w-[1920px] flex-wrap items-stretch gap-x-6 lg:flex-nowrap">
+        <div className="relative flex min-w-[235px] items-center gap-3 border-panelBorder py-2 lg:border-r lg:pr-6">
+          {markets.length > 0 && selectedPerp && onSelectPerp ? (
+            <select
+              aria-label="选择永续合约"
+              value={selectedPerp}
+              onChange={(event) => onSelectPerp(event.target.value)}
+              className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+            >
+              {markets.map((item) => (
+                <option key={item.address} value={item.address}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#f7931a] text-[11px] font-black text-white">
+            ₿
           </div>
-          <h1 className="mt-1 text-lg font-bold text-white sm:text-xl">
-            {market?.name ?? "—"}
-          </h1>
-          <div className="mt-2 flex items-baseline gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-bold text-white sm:text-base">
+                {market?.name ?? "—"}
+              </h1>
+              <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold text-accent">
+                {leverageLabel}
+              </span>
+              <ChevronDownIcon className="h-3.5 w-3.5 text-subtle" />
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-[10px] text-subtle">
+              <span>USDC 保证金</span>
+              <span className="h-1 w-1 rounded-full bg-faint" />
+              <span className="text-buy">Sepolia</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex min-w-[180px] items-center py-2">
+          <div>
+            <div className="flex items-baseline gap-2">
             <span
-              className={`font-mono text-3xl font-semibold tracking-tight sm:text-4xl ${
-                lastUsd > 0 ? "text-foreground" : "text-subtle"
+              className={`font-mono text-xl font-semibold tracking-tight sm:text-2xl ${
+                lastUsd > 0 ? "text-buy" : "text-subtle"
               }`}
             >
               {lastUsd > 0 ? formatNumber(lastUsd, 2) : "—"}
             </span>
-            <span className="text-sm text-subtle">USDT</span>
+              <span className="text-[10px] text-subtle">USDT</span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-subtle">最新指数价</p>
           </div>
-          <p className="mt-1 text-[11px] text-muted">
-            最新价优先展示现货指数（Coinbase/OKX/Binance 加权）；下单使用系统开仓价
-          </p>
         </div>
 
-        <div className="flex flex-wrap gap-6 text-xs sm:gap-8 sm:text-sm">
+        <div className="terminal-scrollbar flex min-w-0 flex-1 items-center gap-6 overflow-x-auto border-t border-panelBorder py-2 text-xs sm:gap-8 lg:border-t-0">
           <Stat
             label="最大杠杆"
             value={leverageLabel}
@@ -94,7 +118,7 @@ export default function FuturesContractBar({
             value={spread > 0 ? formatNumber(spread, 2) : "—"}
           />
           {market?.address ? (
-            <FundingRatePanel perp={market.address} />
+            <FundingRatePanel perp={market.address} compact />
           ) : null}
           {bidSharePct != null ? (
             <Stat
@@ -120,10 +144,10 @@ function Stat({
   muted?: boolean;
 }) {
   return (
-    <div>
-      <div className="text-subtle">{label}</div>
+    <div className="shrink-0 whitespace-nowrap">
+      <div className="text-[10px] text-subtle">{label}</div>
       <div
-        className={`mt-0.5 font-mono font-medium ${
+        className={`mt-1 font-mono text-xs font-medium ${
           accent ? "text-accent" : muted ? "text-yellow-500" : "text-foreground"
         }`}
       >

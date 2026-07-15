@@ -6,7 +6,12 @@ import { formatNumber } from "@/lib/format";
 import { markPriceToUsd } from "@/lib/metanode-markets";
 import type { PerpMarketDTO } from "@/lib/metanode-api";
 import type { RealtimeStatus } from "@/lib/useMarketQuotesRealtime";
-import { ChevronDownIcon } from "@heroicons/react/24/outline";
+import {
+  ChevronDownIcon,
+  Cog6ToothIcon,
+  GlobeAltIcon,
+  MagnifyingGlassIcon,
+} from "@heroicons/react/24/outline";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 type Props = {
@@ -55,11 +60,35 @@ export default function MetaNodeTopBar({
   }, []);
 
   return (
-    <div className="fixed left-0 right-0 top-0 z-40 border-b border-panelBorder bg-surface px-3 py-2 md:px-6 md:py-3">
-      <div className="flex items-center justify-between gap-3 md:justify-start md:gap-4">
+    <>
+      <div className="fixed left-0 right-0 top-0 z-50 flex h-6 items-center justify-center bg-accent px-4 text-center text-[10px] font-semibold tracking-wide text-[#031011]">
+        MetaNode 永续合约已接入 Sepolia 测试网 · 链上透明结算 · 实时指数定价
+      </div>
+      <header className="fixed left-0 right-0 top-6 z-40 h-14 border-b border-panelBorder bg-[#050708]/98 px-3 md:px-5">
+      <div className="mx-auto flex h-full max-w-[1920px] items-center gap-2 md:gap-5">
+        <div className="mr-1 flex shrink-0 items-center gap-2.5">
+          <div className="relative grid h-8 w-8 place-items-center overflow-hidden rounded bg-accent text-[13px] font-black text-page">
+            M
+            <span className="absolute -bottom-2 -right-2 h-4 w-4 rounded-full border border-page/30 bg-white/40" />
+          </div>
+          <div className="hidden leading-none sm:block">
+            <div className="text-[15px] font-bold tracking-tight text-white">MetaNode</div>
+            <div className="mt-1 text-[9px] font-medium uppercase tracking-[0.22em] text-subtle">Perpetual</div>
+          </div>
+        </div>
+
+        <div className="hidden h-5 w-px bg-panelBorder lg:block" />
+
+        <nav className="hidden h-full items-center gap-1 lg:flex">
+          <span className="flex h-full items-center border-b-2 border-accent px-3 text-xs font-semibold text-white">永续合约</span>
+          <span className="px-3 text-xs font-medium text-muted">U 本位</span>
+          <span className="px-3 text-xs font-medium text-muted">链上行情</span>
+          <span className="px-3 text-xs font-medium text-muted">合约信息</span>
+        </nav>
+
         <Link
           href="/positions"
-          className="shrink-0 rounded-lg bg-elevated px-3 py-2 text-xs font-semibold text-foreground hover:bg-panelBorder md:text-sm"
+          className="hidden shrink-0 rounded px-2.5 py-2 text-xs font-medium text-muted hover:bg-elevated hover:text-white xl:block"
         >
           持仓
         </Link>
@@ -67,40 +96,42 @@ export default function MetaNodeTopBar({
           <button
             type="button"
             onClick={onOpenProfile}
-            className="shrink-0 rounded-lg bg-elevated px-3 py-2 text-xs font-semibold text-foreground hover:bg-panelBorder md:text-sm"
+            className="hidden shrink-0 rounded border-0 bg-transparent px-2.5 py-2 text-xs font-medium text-muted hover:bg-elevated hover:text-white xl:block"
           >
             账户
           </button>
         ) : null}
 
-        <div ref={containerRef} className="relative shrink-0">
+        <div ref={containerRef} className="relative shrink-0 lg:hidden">
           <button
             type="button"
             onClick={() => setIsOpen(!isOpen)}
-            className="flex items-center gap-2 rounded-lg border-0 bg-elevated p-1 transition hover:bg-panelBorder md:gap-3 md:p-2"
+            className="flex h-9 items-center gap-2 rounded border border-panelBorder bg-elevated/55 px-2 text-left hover:border-faint hover:bg-elevated md:min-w-[168px]"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-xs font-bold text-black md:h-10 md:w-10 md:text-sm">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-[11px] font-black text-page">
               {(current?.name.split("-")[0] ?? "?").slice(0, 1)}
             </div>
             <div className="text-left">
-              <div className="flex items-center gap-1 md:gap-2">
-                <div className="text-sm font-bold text-white md:text-lg">
+              <div className="flex items-center gap-1.5">
+                <div className="text-[13px] font-semibold text-white">
                   {displayName}
                 </div>
                 <ChevronDownIcon
-                  className={`h-3 w-3 text-muted transition md:h-4 md:w-4 ${isOpen ? "rotate-180" : ""}`}
+                  className={`h-3.5 w-3.5 text-subtle transition ${isOpen ? "rotate-180" : ""}`}
                 />
               </div>
-              <div className="text-[10px] text-emerald-400/90 md:text-xs">
-                Sepolia 链上
+              <div className="mt-0.5 flex items-center gap-1.5 text-[9px] text-subtle">
+                <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-buy shadow-[0_0_8px_#2ecb8b]" : "bg-faint"}`} />
+                Sepolia · 永续
               </div>
             </div>
           </button>
 
           {isOpen ? (
-            <div className="absolute left-0 top-full z-50 mt-2 w-[min(90vw,420px)] rounded-lg border border-panelBorder bg-panel shadow-2xl">
-              <div className="border-b border-panelBorder px-3 py-2 text-xs text-subtle">
-                MetaNode 永续（链上 MarkPrice）
+            <div className="absolute left-0 top-full z-50 mt-2 w-[min(90vw,420px)] overflow-hidden rounded-lg border border-panelBorder bg-panel shadow-2xl shadow-black/50">
+              <div className="flex items-center justify-between border-b border-panelBorder px-3 py-2.5 text-xs text-subtle">
+                <span>选择永续合约</span>
+                <span className="text-[10px] text-buy">Sepolia</span>
               </div>
               <div className="max-h-[360px] overflow-y-auto">
                 {markets.map((m) => {
@@ -130,11 +161,9 @@ export default function MetaNodeTopBar({
           ) : null}
         </div>
 
-        <div className="flex flex-col items-end md:hidden">
-          <div className="text-sm font-semibold text-accent">
-            {formatNumber(markUsd, 2)}
-          </div>
-          <div className="text-[10px] text-muted">标记价 USDC</div>
+        <div className="ml-auto hidden items-center gap-2 text-[10px] text-subtle xl:flex">
+          <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-buy" : "bg-faint"}`} />
+          {live ? "行情实时同步" : "行情轮询中"}
         </div>
 
         <div
@@ -175,7 +204,19 @@ export default function MetaNodeTopBar({
           </div>
         </div>
 
-        <div className="hidden md:ml-auto md:block">
+        <div className="hidden items-center gap-1 lg:flex">
+          <button type="button" aria-label="搜索" className="grid h-8 w-8 place-items-center rounded border-0 bg-transparent text-muted hover:bg-elevated hover:text-white">
+            <MagnifyingGlassIcon className="h-4 w-4" />
+          </button>
+          <button type="button" aria-label="语言" className="grid h-8 w-8 place-items-center rounded border-0 bg-transparent text-muted hover:bg-elevated hover:text-white">
+            <GlobeAltIcon className="h-4 w-4" />
+          </button>
+          <button type="button" aria-label="设置" className="grid h-8 w-8 place-items-center rounded border-0 bg-transparent text-muted hover:bg-elevated hover:text-white">
+            <Cog6ToothIcon className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="ml-auto hidden md:block lg:ml-0">
           <ConnectButton />
         </div>
         <div className="md:hidden">
@@ -186,6 +227,7 @@ export default function MetaNodeTopBar({
           />
         </div>
       </div>
-    </div>
+      </header>
+    </>
   );
 }

@@ -34,16 +34,20 @@ import {
 } from "@/lib/metanode-markets";
 
 const RESOLUTIONS = [
-  { label: "15m", value: "15" },
-  { label: "1h", value: "60" },
-  { label: "4h", value: "240" },
-  { label: "1d", value: "1D" },
+  { label: "1分", value: "1m" },
+  { label: "5分", value: "5m" },
+  { label: "15分", value: "15" },
+  { label: "1小时", value: "60" },
+  { label: "4小时", value: "240" },
+  { label: "1天", value: "1D" },
 ];
 
 const POLL_MS = 5_000;
 const CHAIN_MARKETS_POLL_MS = 30_000;
 
 function intervalSeconds(resolution: string): number {
+  if (resolution === "1m") return 60;
+  if (resolution === "5m") return 5 * 60;
   if (resolution === "60") return 60 * 60;
   if (resolution === "240") return 4 * 60 * 60;
   if (resolution === "1D") return 24 * 60 * 60;
@@ -326,8 +330,19 @@ export default function TradePage({
     void loadTrades();
   };
 
+  const quoteStatus = dataError
+    ? "链上行情连接异常"
+    : !isSupabaseConfigured()
+      ? "指数行情 HTTP 轮询"
+      : realtimeStatus === "error"
+        ? "实时行情重连中"
+        : realtimeStatus === "subscribed"
+          ? "行情实时同步"
+          : "行情连接中";
+  const quoteStatusError = Boolean(dataError || realtimeStatus === "error");
+
   return (
-    <div className="min-h-screen bg-page pt-[72px]">
+    <div className="min-h-screen bg-page pb-6 pt-20">
       <MetaNodeTopBar
         markets={displayMarkets}
         selectedPerp={selectedPerp}
@@ -340,30 +355,17 @@ export default function TradePage({
 
       <FuturesContractBar
         market={selectedMarketDto}
+        markets={displayMarkets}
+        selectedPerp={selectedPerp}
+        onSelectPerp={(addr) => setSelectedPerp(addr as `0x${string}`)}
         indexPriceUsd={currentIndexUsd}
         bidSharePct={bidSharePct}
       />
 
-      {dataError ? (
-        <div className="mx-4 mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          链上行情加载失败：{dataError}（请确认后端 {METANODE_API_BASE} 已启动）
-        </div>
-      ) : null}
-      {!isSupabaseConfigured() ? (
-        <div className="mx-4 mt-2 rounded-lg border border-panelBorder bg-elevated px-3 py-2 text-xs text-muted">
-          未配置 Supabase Realtime（NEXT_PUBLIC_SUPABASE_URL / ANON_KEY），指数价仍走 HTTP 轮询。
-        </div>
-      ) : realtimeStatus === "error" ? (
-        <div className="mx-4 mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-          Supabase Realtime 连接失败：{realtimeError ?? "未知错误"}。请确认已执行
-          `others/backend/sql/supabase_market_quotes.sql`（含 REPLICA IDENTITY FULL）。
-        </div>
-      ) : null}
-
-      {/* Gate 式三栏：K 线 | 订单簿/成交 | 开仓 */}
-      <div className="px-2 pb-4 pt-2 sm:px-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
-          <section className="min-h-[360px] min-w-0 flex-1 lg:min-h-[480px]">
+      {/* 专业交易终端：K 线 | 订单簿/成交 | 下单 */}
+      <main className="mx-auto max-w-[1920px] p-1.5 sm:p-2">
+        <div className="grid grid-cols-1 gap-px overflow-hidden border border-panelBorder bg-panelBorder xl:h-[calc(100vh-192px)] xl:min-h-[540px] xl:grid-cols-[minmax(520px,1fr)_300px_340px] 2xl:grid-cols-[minmax(640px,1fr)_320px_360px]">
+          <section className="min-h-[420px] min-w-0 bg-panel xl:min-h-0">
             <Chart
               data={kline}
               loading={klineLoading}
@@ -371,10 +373,20 @@ export default function TradePage({
               resolution={resolution}
               onResolutionChange={setResolution}
               options={RESOLUTIONS}
+              symbol={symbol}
+              depthBids={bookBids.map((entry) => ({
+                price: markPriceToUsd(entry.price),
+                amount: Math.abs(paperToSize(entry.amount)),
+              }))}
+              depthAsks={bookAsks.map((entry) => ({
+                price: markPriceToUsd(entry.price),
+                amount: Math.abs(paperToSize(entry.amount)),
+              }))}
+              trades={recentTrades}
             />
           </section>
 
-          <section className="flex w-full shrink-0 flex-col lg:w-[300px]">
+          <section className="flex min-h-[420px] min-w-0 flex-col bg-panel xl:min-h-0">
             <MarketDepthTabs
               bids={bookBids}
               asks={bookAsks}
@@ -383,11 +395,11 @@ export default function TradePage({
               tradesLoading={tradesLoading}
               markPriceUsd={currentMarkUsd}
               symbol={symbol}
-              className="min-h-[360px] flex-1 lg:min-h-0"
+              className="min-h-[420px] flex-1 border-0 xl:min-h-0"
             />
           </section>
 
-          <aside className="w-full shrink-0 lg:w-[320px] lg:border-l lg:border-panelBorder lg:pl-3 2xl:w-[360px]">
+          <aside className="terminal-scrollbar min-w-0 bg-panel xl:h-full xl:overflow-y-auto">
             <OrderForm
               markets={metaMarkets}
               selectedPerp={selectedPerp}
@@ -403,9 +415,14 @@ export default function TradePage({
           </aside>
         </div>
 
-        <div className="mt-3 panel overflow-hidden">
-          <div className="border-b border-panelBorder px-4 py-2.5 text-sm font-medium text-white">
-            仓位
+        <div className="mt-2 overflow-hidden border border-panelBorder bg-panel">
+          <div className="flex h-10 items-center justify-between border-b border-panelBorder px-4">
+            <div className="flex h-full items-center gap-6 text-xs">
+              <span className="relative flex h-full items-center font-semibold text-white after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-accent">当前仓位</span>
+              <span className="text-subtle">当前委托</span>
+              <span className="text-subtle">历史成交</span>
+            </div>
+            <span className="hidden text-[10px] text-subtle sm:block">数据来自 Sepolia · 自动更新</span>
           </div>
           <div className="p-2">
             <Positions
@@ -414,6 +431,21 @@ export default function TradePage({
               embedded
             />
           </div>
+        </div>
+      </main>
+
+      <div className="fixed bottom-0 left-0 right-0 z-40 flex h-6 items-center justify-between border-t border-panelBorder bg-[#070a0b] px-3 text-[9px] text-subtle">
+        <div
+          className="flex min-w-0 items-center gap-2"
+          title={dataError ?? realtimeError ?? undefined}
+        >
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${quoteStatusError ? "bg-amber-400" : "bg-buy"}`} />
+          <span className={quoteStatusError ? "text-amber-300" : ""}>{quoteStatus}</span>
+          {quoteStatusError ? <span className="hidden truncate text-faint sm:block">· 请检查 {METANODE_API_BASE}</span> : null}
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="hidden sm:inline">UTC+8</span>
+          <span className="text-muted">Sepolia 永续合约</span>
         </div>
       </div>
     </div>

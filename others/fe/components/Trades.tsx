@@ -14,55 +14,89 @@ type Props = {
   trades: DisplayTrade[];
   loading?: boolean;
   embedded?: boolean;
+  symbol?: string;
 };
 
-export default function Trades({ trades, loading = false, embedded = false }: Props) {
+export default function Trades({
+  trades,
+  loading = false,
+  embedded = false,
+  symbol = "BTC",
+}: Props) {
   const body = (
-      <div className="px-4 pb-4 pt-2 text-xs text-muted">
-        <div className="grid grid-cols-3 text-[11px] text-subtle">
-          <span>价格</span>
-          <span className="text-right">数量</span>
-          <span className="text-right">时间</span>
-        </div>
-        <div className="mt-3 space-y-1">
-          {loading ? (
-            <div className="py-4 text-center text-subtle">加载中…</div>
-          ) : (
-            trades.map((trade, index) => (
-              <div
-                key={`${trade.ts}-${trade.price}-${index}`}
-                className={`grid grid-cols-3 ${
-                  trade.side === "BUY" ? "text-buy" : "text-sell"
-                }`}
-              >
-                <span>{formatNumber(trade.price, 2)}</span>
-                <span className="text-right">
-                  {formatNumber(trade.size, 4)}
-                </span>
-                <span className="text-right text-muted">
-                  {formatTime(trade.ts * 1000)}
-                </span>
-              </div>
-            ))
-          )}
-          {!loading && trades.length === 0 && (
-            <div className="py-4 text-center text-subtle">
-              暂无链上成交记录
-            </div>
-          )}
-        </div>
+    <div className="flex h-full min-h-0 flex-col bg-[#070a0b] font-mono">
+      <div className="grid h-10 shrink-0 grid-cols-[1fr_0.9fr_0.9fr] items-center border-b border-panelBorder px-4 font-sans text-[10px] text-subtle">
+        <span>价格(USDT)</span>
+        <span className="text-right">数量({symbol})</span>
+        <span className="text-right">时间</span>
       </div>
+
+      <div className="terminal-scrollbar min-h-0 flex-1 overflow-y-auto py-1">
+        {loading ? (
+          <TradePlaceholders />
+        ) : trades.length > 0 ? (
+          trades.slice(0, 30).map((trade, index) => (
+            <div
+              key={`${trade.ts}-${trade.price}-${trade.size}-${index}`}
+              className={`trade-row-new grid h-6 grid-cols-[1fr_0.9fr_0.9fr] items-center px-4 text-[11px] hover:bg-white/[0.025] ${
+                trade.side === "BUY" ? "trade-row-buy" : "trade-row-sell"
+              }`}
+              title={trade.txHash ? `交易哈希：${trade.txHash}` : undefined}
+            >
+              <span className={trade.side === "BUY" ? "text-buy" : "text-sell"}>
+                {formatNumber(trade.price, 1)}
+              </span>
+              <span className="text-right text-foreground">
+                {formatNumber(trade.size, 3)}
+              </span>
+              <span className="text-right text-subtle">
+                {formatTime(trade.ts * 1000)}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="relative h-full min-h-[350px]">
+            <TradePlaceholders muted />
+            <span className="absolute inset-0 grid place-items-center font-sans text-[10px] text-subtle">
+              暂无链上成交记录
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex h-8 shrink-0 items-center justify-between border-t border-panelBorder px-4 font-sans text-[9px] text-subtle">
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-buy shadow-[0_0_6px_#2ecb8b]" />
+          实时逐笔成交
+        </span>
+        <span>链上撮合</span>
+      </div>
+    </div>
   );
 
   if (embedded) return body;
 
   return (
-    <div className="panel">
-      <div className="flex items-center justify-between gap-2 px-4 pt-3">
-        <div className="panel-header border-0 p-0">最新成交</div>
-        <span className="text-[10px] text-emerald-400/80">链上撮合</span>
-      </div>
+    <div className="panel overflow-hidden">
+      <div className="panel-header">最新成交</div>
       {body}
+    </div>
+  );
+}
+
+function TradePlaceholders({ muted = false }: { muted?: boolean }) {
+  return (
+    <div className={muted ? "opacity-40" : "animate-pulse opacity-60"}>
+      {Array.from({ length: 16 }).map((_, index) => (
+        <div
+          key={`trade-placeholder-${index}`}
+          className="grid h-6 grid-cols-[1fr_0.9fr_0.9fr] items-center px-4 text-[11px] text-faint"
+        >
+          <span className={index % 3 === 0 ? "text-sell/25" : "text-buy/25"}>—</span>
+          <span className="text-right">—</span>
+          <span className="text-right">—</span>
+        </div>
+      ))}
     </div>
   );
 }

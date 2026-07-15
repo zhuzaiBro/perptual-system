@@ -1,7 +1,7 @@
 /** MetaNode 后端 HTTP（钱包登录等） */
 
 /** 生产默认 API（Vercel 未注入 env 时仍走公网后端，避免构建产物请求 localhost） */
-const PROD_METANODE_API = "https://perptural-api.zood.work";
+const PROD_METANODE_API = "https://perpetual-api.zood.work";
 const DEV_METANODE_API = "http://127.0.0.1:28888";
 
 function resolveMetanodeApiBase(): string {

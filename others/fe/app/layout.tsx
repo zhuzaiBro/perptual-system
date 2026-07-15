@@ -3,8 +3,8 @@ import "./globals.css";
 import { Providers } from "@/components/Providers";
 
 export const metadata = {
-  title: "永续合约详情",
-  description: "永续合约详情页 - 交易面板"
+  title: "MetaNode 永续合约",
+  description: "MetaNode 链上永续合约专业交易终端"
 };
 
 export default function RootLayout({

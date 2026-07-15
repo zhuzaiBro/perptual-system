@@ -1,6 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+import {
+  CalculatorIcon,
+  ChevronDownIcon,
+  InformationCircleIcon,
+  TicketIcon,
+} from "@heroicons/react/24/outline";
 import { formatUnits } from "viem";
 import { useAccount, useChainId, useReadContract, useSignTypedData } from "wagmi";
 import { sepolia } from "wagmi/chains";
@@ -74,7 +82,6 @@ function formatOpenPriceSource(source: string): string {
       return source || "系统价";
   }
 }
-
 type Props = {
   markets: MetaNodeMarket[];
   selectedPerp: `0x${string}`;
@@ -112,6 +119,7 @@ export default function OrderForm({
   const [openPriceSource, setOpenPriceSource] = useState<string>("");
   const [openPriceMode, setOpenPriceMode] = useState<OpenPriceMode>("system");
   const [amount, setAmount] = useState("");
+  const [sizePercent, setSizePercent] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -437,417 +445,534 @@ export default function OrderForm({
   ]);
 
   const priceNum = Number(price) || 0;
+  const maxSizeByCredit = useMemo(() => {
+    const reference = priceNum || markUsd || indexPriceUsd;
+    if (isCloseMode || !reference || dealerCreditHuman == null) return 0;
+    return (dealerCreditHuman * leverage) / reference;
+  }, [dealerCreditHuman, indexPriceUsd, isCloseMode, leverage, markUsd, priceNum]);
 
+  const handleSizePercentChange = (nextPercent: number) => {
+    setSizePercent(nextPercent);
+    if (maxSizeByCredit > 0) {
+      setAmount(((maxSizeByCredit * nextPercent) / 100).toFixed(4));
+    }
+  };
   return (
-    <div className="panel lg:sticky lg:top-[72px]">
-      <div className="flex border-b border-panelBorder text-sm">
+    <div className="min-h-full bg-[#070a0b] text-foreground">
+      <div className="flex h-14 items-end gap-7 border-b border-panelBorder px-5">
         <button
           type="button"
-          onClick={() => setPanelMode("open")}
-          className={`flex-1 border-0 py-3 font-medium ${
-            panelMode === "open"
-              ? "border-b-2 border-accent text-white"
-              : "text-subtle"
-          }`}
+          className="relative h-full border-0 bg-transparent pt-2 text-base font-bold text-white after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-white"
         >
-          开仓
+          交易
         </button>
         <button
           type="button"
-          onClick={() => setPanelMode("close")}
-          className={`flex-1 border-0 py-3 font-medium ${
-            panelMode === "close"
-              ? "border-b-2 border-accent text-white"
-              : "text-subtle"
-          }`}
+          disabled
+          className="h-full border-0 bg-transparent pt-2 text-base font-semibold text-subtle"
         >
-          平仓
+          机器人
         </button>
       </div>
 
-      <div className="space-y-4 px-4 pb-4 pt-3 text-sm">
-        {!hideMarketSelect ? (
-          <label className="block text-xs text-subtle">
-            市场
+      <div className="px-4 pb-5 pt-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex h-9 items-center gap-1.5 rounded bg-[#2c3139] px-3 text-sm font-semibold text-white hover:bg-[#383e47]"
+          >
+            全仓
+            <ChevronDownIcon className="h-3.5 w-3.5 text-subtle" />
+          </button>
+
+          <label className="relative flex h-9 items-center gap-1.5 rounded bg-[#2c3139] px-3 text-sm font-semibold text-white hover:bg-[#383e47]">
+            {leverage}X
+            <ChevronDownIcon className="h-3.5 w-3.5 text-subtle" />
             <select
-              value={selectedPerp}
-              onChange={(e) => onSelectPerp(e.target.value as `0x${string}`)}
-              className="mt-1 w-full rounded-lg border border-panelBorder bg-elevated px-3 py-2 text-sm text-foreground outline-none"
+              aria-label="选择杠杆倍数"
+              value={leverage}
+              onChange={(event) => handleLeverageChange(Number(event.target.value))}
+              className="absolute inset-0 cursor-pointer opacity-0"
             >
-              {markets.map((m) => (
-                <option key={m.address} value={m.address}>
-                  {m.name}
+              {leverageOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}X
                 </option>
               ))}
             </select>
           </label>
-        ) : (
-          <div className="space-y-1 text-xs text-subtle">
-            <div>
-              {selectedMarket?.name ?? "—"} ·{" "}
-              {useSystemOpenPrice ? "开仓系统价" : "开仓限价"}
-            </div>
-            {maxLeverageNum > 0 ? (
-              <p className="text-[11px] text-faint">
-                链上最大 {formatLeverageLabel(risk.maxLeverage)}
-                {risk.initialMarginPct
-                  ? ` · 初始保证金率 ${risk.initialMarginPct}%`
-                  : ""}
-              </p>
-            ) : null}
-          </div>
-        )}
 
-        {!isCloseMode && maxLeverageNum > 0 ? (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-subtle">
-              <span>杠杆倍数</span>
-              <span className="font-mono text-accent">{leverage}x</span>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {leverageOptions.map((lev) => (
-                <button
-                  key={lev}
-                  type="button"
-                  onClick={() => handleLeverageChange(lev)}
-                  className={`min-w-[2.5rem] rounded-md px-2 py-1.5 text-xs font-semibold transition ${
-                    leverage === lev
-                      ? "bg-accent text-black"
-                      : "bg-elevated text-muted hover:text-foreground"
-                  }`}
-                >
-                  {lev}x
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] leading-relaxed text-faint">
-              按所选杠杆计算占用保证金；撮合仍按限价×数量全额名义成交。
-            </p>
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-elevated p-1">
           <button
             type="button"
-            onClick={() => setSide("long")}
-            className={`rounded-md py-2.5 text-sm font-semibold transition ${
-              side === "long"
-                ? "bg-buy text-black"
-                : "text-subtle hover:text-foreground"
-            }`}
+            aria-label="合约体验金"
+            className="relative ml-auto grid h-9 w-9 place-items-center border-0 bg-transparent text-white hover:text-accent"
           >
-            买入 / 做多
-          </button>
-          <button
-            type="button"
-            onClick={() => setSide("short")}
-            className={`rounded-md py-2.5 text-sm font-semibold transition ${
-              side === "short"
-                ? "bg-sell text-white"
-                : "text-subtle hover:text-foreground"
-            }`}
-          >
-            卖出 / 做空
+            <TicketIcon className="h-6 w-6" />
+            <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border border-[#070a0b] bg-sell" />
           </button>
         </div>
 
-        {!isCloseMode ? (
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-elevated p-1 text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setOpenPriceMode("system");
-              }}
-              className={`rounded-md py-2 font-medium transition ${
-                openPriceMode === "system"
-                  ? "bg-panelBorder text-foreground"
-                  : "text-subtle hover:text-foreground"
-              }`}
+        <div className="mt-5 grid grid-cols-2 overflow-hidden rounded border border-panelBorder bg-[#252a31]">
+          <button
+            type="button"
+            onClick={() => setPanelMode("open")}
+            className={
+              "h-11 border-0 text-sm font-bold " +
+              (panelMode === "open"
+                ? "rounded border border-buy bg-[#252a31] text-buy"
+                : "bg-transparent text-subtle hover:text-white")
+            }
+          >
+            开仓
+          </button>
+          <button
+            type="button"
+            onClick={() => setPanelMode("close")}
+            className={
+              "h-11 border-0 text-sm font-bold " +
+              (panelMode === "close"
+                ? "rounded border border-sell bg-[#252a31] text-sell"
+                : "bg-transparent text-subtle hover:text-white")
+            }
+          >
+            平仓
+          </button>
+        </div>
+
+        {!hideMarketSelect ? (
+          <label className="mt-4 block text-xs text-subtle">
+            市场
+            <select
+              value={selectedPerp}
+              onChange={(event) =>
+                onSelectPerp(event.target.value as `0x${string}`)
+              }
+              className="mt-1.5 w-full rounded border border-panelBorder bg-[#2c3139] px-3 py-2.5 text-sm text-white outline-none"
             >
-              系统价
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpenPriceMode("manual");
-                if (!price.trim() && markUsd > 0) {
-                  setPrice(formatNumber(markUsd, 2));
-                }
-              }}
-              className={`rounded-md py-2 font-medium transition ${
-                openPriceMode === "manual"
-                  ? "bg-panelBorder text-foreground"
-                  : "text-subtle hover:text-foreground"
-              }`}
-            >
-              限价
-            </button>
-          </div>
+              {markets.map((market) => (
+                <option key={market.address} value={market.address}>
+                  {market.name}
+                </option>
+              ))}
+            </select>
+          </label>
         ) : null}
 
-        {useSystemOpenPrice ? (
-          <div className="rounded-lg border border-panelBorder bg-elevated px-3 py-3 text-center">
-            <div className="flex items-center justify-center gap-2 text-[11px] text-subtle">
-              <span>开仓价格（系统查询）</span>
-              <button
-                type="button"
-                disabled={quoteLoading}
-                onClick={() => void refreshSystemQuote()}
-                className="rounded border-0 bg-transparent px-1 text-accent hover:underline disabled:opacity-50"
-              >
-                {quoteLoading ? "刷新中…" : "刷新"}
-              </button>
-            </div>
-            <div
-              className={`mt-1 font-mono text-2xl font-semibold ${
-                side === "long" ? "text-buy" : "text-sell"
-              }`}
-            >
-              {priceNum > 0 ? formatNumber(priceNum, 2) : "—"}
-            </div>
-            <div className="mt-1 text-[10px] text-subtle">USDT</div>
-            {openPriceSource ? (
-              <p className="mt-2 text-[10px] leading-relaxed text-subtle">
-                {side === "long" ? "做多" : "做空"} ·{" "}
-                {formatOpenPriceSource(openPriceSource)}
-                <br />
-                默认：做多取卖一，做空取买一
-              </p>
-            ) : null}
-            {signLimitPriceUsd ? (
-              <p className="mt-2 text-[11px] text-amber-300/90">
-                签名限价（含 {slippagePercentLabel(slippageBps)} 滑点保护）：{" "}
-                <span className="font-mono text-foreground">
-                  {formatNumber(Number(signLimitPriceUsd), 2)}
-                </span>{" "}
-                USDT
-              </p>
-            ) : null}
-          </div>
-        ) : (
-          <label className="block text-xs text-subtle">
-            <div className="mb-1.5 flex items-center justify-between">
-              <span>{isCloseMode ? "平仓限价" : "开仓限价"}</span>
-              <span>USDT</span>
-            </div>
-            <input
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              inputMode="decimal"
-              placeholder={markUsd > 0 ? formatNumber(markUsd, 2) : "65000.00"}
-              className="w-full rounded-lg border border-panelBorder bg-elevated px-3 py-2.5 text-center font-mono text-lg text-foreground outline-none focus:border-accent/50"
-            />
-            {!isCloseMode && markUsd > 0 ? (
-              <button
-                type="button"
-                onClick={() => setPrice(formatNumber(markUsd, 2))}
-                className="mt-1.5 w-full rounded border border-panelBorder bg-surface py-1 text-[10px] text-muted hover:bg-panelBorder"
-              >
-                填入当前标记价 {formatNumber(markUsd, 2)}
-              </button>
-            ) : null}
-          </label>
-        )}
+        <div className="mt-5 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setOpenPriceMode("manual");
+              if (!price.trim() && (markUsd > 0 || indexPriceUsd > 0)) {
+                setPrice(formatNumber(markUsd || indexPriceUsd, 2));
+              }
+            }}
+            className={
+              "rounded border-0 px-3 py-2 text-sm font-semibold " +
+              (openPriceMode === "manual"
+                ? "bg-[#2c3139] text-white"
+                : "bg-transparent text-subtle hover:text-white")
+            }
+          >
+            限价
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpenPriceMode("system")}
+            className={
+              "rounded border-0 px-3 py-2 text-sm font-semibold " +
+              (openPriceMode === "system"
+                ? "bg-[#2c3139] text-white"
+                : "bg-transparent text-subtle hover:text-white")
+            }
+          >
+            市价
+          </button>
+          <button
+            type="button"
+            disabled
+            className="flex items-center gap-1 border-0 bg-transparent px-3 py-2 text-sm font-semibold text-subtle"
+          >
+            计划
+            <ChevronDownIcon className="h-3.5 w-3.5" />
+          </button>
+          <InformationCircleIcon className="ml-1 h-4 w-4 text-subtle" />
+        </div>
 
-        <div className="space-y-2 rounded-lg border border-panelBorder bg-elevated px-3 py-2.5">
-          <div className="flex items-center justify-between text-xs text-subtle">
-            <span>滑点保护</span>
-            <span className="font-mono text-accent">
-              {slippagePercentLabel(slippageBps)}
+        <button
+          type="button"
+          onClick={() =>
+            handleSlippageChange(
+              SLIPPAGE_PRESETS_BPS[
+                (SLIPPAGE_PRESETS_BPS.findIndex(
+                  (preset) => preset === slippageBps
+                ) +
+                  1) %
+                  SLIPPAGE_PRESETS_BPS.length
+              ]
+            )
+          }
+          className="relative mt-3 flex h-7 w-full items-center justify-center rounded-full border-0 bg-amber-700/55 px-4 text-[11px] font-semibold text-amber-400 hover:bg-amber-700/70"
+        >
+          限制最大滑点 {slippagePercentLabel(slippageBps)}
+          <InformationCircleIcon className="ml-1.5 h-3.5 w-3.5" />
+          <span className="absolute -top-1 left-24 h-2 w-2 rotate-45 bg-amber-700/55" />
+        </button>
+
+        <div className="mt-5 flex items-center text-xs text-subtle">
+          <span>
+            可用余额:
+            <b className="ml-0.5 font-mono font-medium text-white">
+              {dealerCreditHuman != null
+                ? formatNumber(dealerCreditHuman, 2)
+                : "0.00"}{" "}
+              USDC
+            </b>
+          </span>
+          <span
+            className={
+              "ml-2 rounded-full border px-1 text-[9px] " +
+              (sessionOk
+                ? "border-buy/50 text-buy"
+                : "border-panelBorder text-subtle")
+            }
+          >
+            Z
+          </span>
+          <CalculatorIcon className="ml-auto h-4 w-4 text-subtle" />
+        </div>
+
+        <div className="mt-3 grid grid-cols-[minmax(0,1fr)_58px] gap-2">
+          <div className="relative h-[58px] rounded bg-[#2c3139] px-3 pb-2 pt-2">
+            <div className="text-[11px] text-subtle">
+              单价
+              {quoteLoading ? " · 刷新中" : ""}
+            </div>
+            {useSystemOpenPrice ? (
+              <div className="mt-0.5 font-mono text-xl font-medium text-white">
+                {priceNum > 0 ? formatNumber(priceNum, 2) : "—"}
+              </div>
+            ) : (
+              <input
+                value={price}
+                onChange={(event) => setPrice(event.target.value)}
+                inputMode="decimal"
+                aria-label={isCloseMode ? "平仓限价" : "开仓限价"}
+                placeholder={markUsd > 0 ? formatNumber(markUsd, 2) : "65455.9"}
+                className="mt-0.5 w-[calc(100%-58px)] border-0 bg-transparent p-0 font-mono text-xl text-white outline-none placeholder:text-faint"
+              />
+            )}
+            <span className="absolute bottom-3 right-3 text-sm font-semibold text-white">
+              USDT
             </span>
           </div>
+          <button
+            type="button"
+            disabled={markUsd <= 0 && indexPriceUsd <= 0}
+            onClick={() => {
+              setOpenPriceMode("manual");
+              setPrice(formatNumber(markUsd || indexPriceUsd, 2));
+            }}
+            className="rounded border-0 bg-[#2c3139] text-sm font-semibold text-subtle hover:text-white disabled:opacity-40"
+          >
+            BBO
+          </button>
+        </div>
+
+        <label className="relative mt-3 block h-[58px] rounded bg-[#2c3139] px-3 pb-2 pt-2">
+          <div className="text-[11px] text-subtle">数量</div>
+          <input
+            value={amount}
+            onChange={(event) => {
+              setAmount(event.target.value);
+              setSizePercent(0);
+            }}
+            inputMode="decimal"
+            aria-label="订单数量"
+            placeholder="最小交易数量 0.001"
+            className="mt-0.5 w-[calc(100%-58px)] border-0 bg-transparent p-0 font-mono text-base text-white outline-none placeholder:text-faint"
+          />
+          <span className="absolute bottom-3 right-3 flex items-center gap-1 text-sm font-semibold text-white">
+            {selectedMarket?.symbol ?? "BTC"}
+            <ChevronDownIcon className="h-3.5 w-3.5 text-subtle" />
+          </span>
+        </label>
+
+        <div className="relative mt-5 px-1">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={25}
+            value={sizePercent}
+            aria-label="仓位数量百分比"
+            onChange={(event) =>
+              handleSizePercentChange(Number(event.target.value))
+            }
+            className="order-size-range w-full"
+            style={{
+              background:
+                "linear-gradient(to right, #16d8d4 0%, #16d8d4 " +
+                sizePercent +
+                "%, #343a40 " +
+                sizePercent +
+                "%, #343a40 100%)",
+            }}
+          />
+          <div className="pointer-events-none absolute left-1 right-1 top-[7px] flex justify-between px-[2px]">
+            {[0, 25, 50, 75, 100].map((tick) => (
+              <span
+                key={tick}
+                className={
+                  "h-1.5 w-1.5 rounded-full " +
+                  (tick <= sizePercent ? "bg-accent" : "bg-[#747f82]")
+                }
+              />
+            ))}
+          </div>
+          <div className="mt-1 flex justify-between text-[11px] text-subtle">
+            <span>0</span>
+            <span>{sizePercent}%</span>
+          </div>
+        </div>
+
+        {isConnected ? (
+          <>
+            <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded bg-panelBorder p-px">
+              <button
+                type="button"
+                onClick={() => setSide("long")}
+                className={
+                  "h-10 text-xs font-bold " +
+                  (side === "long"
+                    ? "bg-buy text-[#03120d]"
+                    : "bg-[#20252b] text-subtle")
+                }
+              >
+                买入 / 做多
+              </button>
+              <button
+                type="button"
+                onClick={() => setSide("short")}
+                className={
+                  "h-10 text-xs font-bold " +
+                  (side === "short"
+                    ? "bg-sell text-white"
+                    : "bg-[#20252b] text-subtle")
+                }
+              >
+                卖出 / 做空
+              </button>
+            </div>
+
+            <button
+              type="button"
+              disabled={
+                submitting ||
+                authPending ||
+                (panelMode === "close" && !closeDraft && !amount) ||
+                (!isCloseMode &&
+                  (creditInsufficient || leverageTooLowForChain))
+              }
+              onClick={() => void submit()}
+              className={
+                "mt-3 w-full rounded py-3 text-sm font-bold disabled:opacity-40 " +
+                (side === "long"
+                  ? "bg-buy text-[#03120d]"
+                  : "bg-sell text-white")
+              }
+            >
+              {submitting
+                ? "签名并提交…"
+                : isCloseMode
+                  ? side === "long"
+                    ? "平空 / 买入"
+                    : "平多 / 卖出"
+                  : side === "long"
+                    ? "开多"
+                    : "开空"}
+            </button>
+          </>
+        ) : (
+          <div className="mt-6 space-y-3">
+            <Link
+              href="/faucet"
+              className="flex h-12 items-center justify-center gap-2 rounded bg-accent text-sm font-bold text-[#041112] hover:bg-[#28e4df]"
+            >
+              <TicketIcon className="h-5 w-5" />
+              领取 Sepolia 测试 USDC
+            </Link>
+            <ConnectButton.Custom>
+              {({ openConnectModal }) => (
+                <button
+                  type="button"
+                  onClick={openConnectModal}
+                  className="h-12 w-full rounded border border-[#343a43] bg-transparent text-sm font-bold text-white hover:border-accent hover:text-accent"
+                >
+                  连接钱包
+                </button>
+              )}
+            </ConnectButton.Custom>
+          </div>
+        )}
+
+        {panelMode === "close" && !closeDraft ? (
+          <p className="mt-3 text-[11px] text-amber-400">
+            请从下方仓位列表选择需要平仓的仓位。
+          </p>
+        ) : null}
+        {authPending && isConnected ? (
+          <p className="mt-3 text-[11px] text-amber-400">
+            请在钱包中完成 MetaNode 登录签名…
+          </p>
+        ) : null}
+        {err ? <p className="mt-3 text-[11px] text-sell">{err}</p> : null}
+        {msg ? <p className="mt-3 text-[11px] text-buy">{msg}</p> : null}
+      </div>
+
+      <details className="group border-t-2 border-[#151b1e]">
+        <summary className="flex h-14 cursor-pointer list-none items-center px-5 text-sm font-bold text-white">
+          保证金
+          <ChevronDownIcon className="ml-auto h-4 w-4 text-subtle transition group-open:rotate-180" />
+        </summary>
+        <div className="space-y-4 border-t border-panelBorder px-4 py-4">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded bg-elevated px-3 py-2">
+              <div className="text-subtle">名义价值</div>
+              <div className="mt-1 font-mono text-white">
+                {notional > 0 ? formatNumber(notional, 2) : "—"} USD
+              </div>
+            </div>
+            <div className="rounded bg-elevated px-3 py-2">
+              <div className="text-subtle">占用保证金</div>
+              <div className="mt-1 font-mono text-accent">
+                {marginRequired > 0
+                  ? formatNumber(marginRequired, 2)
+                  : "—"}{" "}
+                USD
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1">
+            {leverageOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => handleLeverageChange(option)}
+                className={
+                  "min-w-[2.5rem] rounded px-2 py-1.5 text-[11px] font-semibold " +
+                  (leverage === option
+                    ? "bg-accent text-black"
+                    : "bg-elevated text-muted")
+                }
+              >
+                {option}X
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-wrap gap-1">
             {SLIPPAGE_PRESETS_BPS.map((bps) => (
               <button
                 key={bps}
                 type="button"
                 onClick={() => handleSlippageChange(bps)}
-                className={`min-w-[2.75rem] rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                  slippageBps === bps
-                    ? "bg-accent text-black"
-                    : "bg-surface text-muted hover:text-foreground"
-                }`}
+                className={
+                  "rounded px-2 py-1 text-[10px] " +
+                  (slippageBps === bps
+                    ? "bg-amber-600/70 text-white"
+                    : "bg-elevated text-muted")
+                }
               >
-                {(bps / 100).toFixed(1)}%
+                滑点 {(bps / 100).toFixed(1)}%
               </button>
             ))}
           </div>
-          <p className="text-[10px] leading-relaxed text-faint">
-            签名限价为参考价
-            {side === "long" ? "向上" : "向下"}放宽 {slippagePercentLabel(slippageBps)}
-            ；链上成交价不会劣于该限价。
-          </p>
-        </div>
 
-        <div className="flex items-center justify-between text-xs text-subtle">
-          <span>标记价</span>
-          <span className="font-mono text-foreground">
-            {markUsd > 0 ? formatNumber(markUsd, 2) : "—"}
-          </span>
-        </div>
-        {indexPriceUsd > 0 ? (
-          <div className="flex items-center justify-between text-xs text-subtle">
-            <span>指数价</span>
-            <span className="font-mono text-foreground">
-              {formatNumber(indexPriceUsd, 2)}
-            </span>
-          </div>
-        ) : null}
-
-        <div className="rounded-lg border border-panelBorder bg-elevated px-3 py-2.5">
           <FundingRatePanel perp={selectedPerp} compact />
         </div>
+      </details>
 
-        <label className="block text-xs text-subtle">
-          <div className="mb-1.5 flex justify-between text-subtle">
-            <span>数量</span>
-            <span>{selectedMarket?.symbol ?? "BTC"}</span>
-          </div>
-          <input
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0.01"
-            className="w-full rounded-lg border border-panelBorder bg-elevated px-3 py-2.5 text-sm text-foreground outline-none focus:border-accent/50"
-          />
-        </label>
-
-        {amount.trim() ? (
-          <div className="rounded-lg border border-panelBorder bg-elevated px-3 py-2 text-[11px] text-subtle">
-            <div className="flex items-center justify-between">
-              <span>深度模拟</span>
-              <span>{previewLoading ? "计算中…" : preview ? "已更新" : "—"}</span>
-            </div>
-            {preview ? (
-              <div className="mt-2 space-y-1 font-mono text-foreground">
-                <div className="flex justify-between">
-                  <span className="text-subtle font-sans">预估成交均价</span>
-                  <span>{preview.avgFillPriceUsd || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-subtle font-sans">最差成交价</span>
-                  <span>{preview.worstFillPriceUsd || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-subtle font-sans">预计成交</span>
-                  <span>
-                    {preview.filledSize} / {preview.requestedSize}
-                  </span>
-                </div>
-                {Number(preview.unfilledSize) > 0 ? (
-                  <p className="pt-1 font-sans text-amber-300/90">
-                    剩余 {preview.unfilledSize} 将在限价内挂簿等待
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="rounded-lg border border-panelBorder bg-elevated px-3 py-2 text-xs text-subtle">
-          <div className="flex justify-between">
-            <span>名义价值</span>
-            <span className="font-mono text-foreground">
-              {notional > 0 ? `${formatNumber(notional, 2)} USD` : "—"}
+      <details className="group border-y-2 border-[#151b1e]">
+        <summary className="flex h-14 cursor-pointer list-none items-center px-5 text-sm font-bold text-white">
+          资产
+          <ChevronDownIcon className="ml-auto h-4 w-4 text-subtle transition group-open:rotate-180" />
+        </summary>
+        <div className="space-y-3 border-t border-panelBorder px-4 py-4 text-xs">
+          <div className="flex justify-between text-subtle">
+            <span>Dealer 链上保证金</span>
+            <span className="font-mono text-white">
+              {dealerCreditHuman != null
+                ? formatNumber(dealerCreditHuman, 2)
+                : "—"}{" "}
+              USDC
             </span>
           </div>
-          {!isCloseMode && notional > 0 ? (
-            <>
-              <div className="mt-1.5 flex justify-between">
-                <span>保证金（{leverage}x）</span>
-                <span className="font-mono text-accent">
-                  {formatNumber(marginRequired, 2)} USD
-                </span>
-              </div>
-              {chainMinMargin > 0 ? (
-                <div className="mt-1 flex justify-between text-[11px] text-faint">
-                  <span>链上最低保证金</span>
-                  <span className="font-mono">
-                    {formatNumber(chainMinMargin, 2)} USD
-                  </span>
-                </div>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-
-        {/* Dealer 保证金余额 */}
-        {address && onSepolia && (
-          <div className={`rounded-lg border px-3 py-2 text-xs ${
-            creditInsufficient
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-              : "border-panelBorder bg-elevated text-subtle"
-          }`}>
-            <div className="flex items-center justify-between">
-              <span>Dealer 链上保证金</span>
-              <span className={`font-mono ${creditInsufficient ? "text-amber-200" : "text-foreground"}`}>
-                {dealerCreditHuman != null
-                  ? `${formatNumber(dealerCreditHuman, 2)} USDC`
-                  : "读取中…"}
+          <div className="flex justify-between text-subtle">
+            <span>标记价格</span>
+            <span className="font-mono text-white">
+              {markUsd > 0 ? formatNumber(markUsd, 2) : "—"}
+            </span>
+          </div>
+          <div className="flex justify-between text-subtle">
+            <span>指数价格</span>
+            <span className="font-mono text-white">
+              {indexPriceUsd > 0 ? formatNumber(indexPriceUsd, 2) : "—"}
+            </span>
+          </div>
+          {openPriceSource ? (
+            <div className="flex justify-between text-subtle">
+              <span>价格来源</span>
+              <span className="text-white">
+                {formatOpenPriceSource(openPriceSource)}
               </span>
             </div>
-            {creditInsufficient && (
-              <p className="mt-1 leading-relaxed">
-                保证金不足：{leverage}x 需约{" "}
-                <span className="font-mono">{formatNumber(marginRequired, 2)}</span>{" "}
-                USDC，请先在「账户」页存入链上保证金。
-              </p>
-            )}
-            {leverageTooLowForChain && !creditInsufficient && (
-              <p className="mt-1 leading-relaxed text-amber-300/90">
-                杠杆过高：请降至 ≤{" "}
-                {formatNumber(notional / chainMinMargin, 1)}x 或增加数量。
-              </p>
-            )}
-          </div>
-        )}
-
-        {panelMode === "close" && !closeDraft ? (
-          <p className="text-[11px] text-amber-400/90">
-            请在下方的「仓位」列表中点击平仓，或切换至「开仓」。
-          </p>
-        ) : useSystemOpenPrice ? (
-          <p className="text-[11px] leading-relaxed text-subtle">
-            参考价来自订单簿；实际签名限价为参考价 ± 滑点保护，链上不会比限价更差。
-          </p>
-        ) : (
-          <p className="text-[11px] leading-relaxed text-subtle">
-            限价由您自行填写；若超出滑点保护范围将无法提交。
-          </p>
-        )}
-
-        {authPending && isConnected ? (
-          <p className="text-xs text-amber-400/90">
-            MetaNode 登录中，请在钱包中完成登录签名…
-          </p>
-        ) : null}
-        {err ? <p className="text-xs text-red-400">{err}</p> : null}
-        {msg ? <p className="text-xs text-emerald-400">{msg}</p> : null}
-
-        <button
-          type="button"
-          disabled={
-            submitting ||
-            !isConnected ||
-            authPending ||
-            (panelMode === "close" && !closeDraft && !amount) ||
-            (!isCloseMode && (creditInsufficient || leverageTooLowForChain))
-          }
-          onClick={() => void submit()}
-          className={`w-full rounded-lg py-3.5 text-base font-bold disabled:opacity-45 ${
-            side === "long" ? "bg-buy text-black" : "bg-sell text-white"
-          }`}
-        >
-          {submitting
-            ? "签名并提交…"
-            : isCloseMode
-              ? side === "long"
-                ? "平空 / 买入"
-                : "平多 / 卖出"
-              : side === "long"
-                ? "开多"
-                : "开空"}
-        </button>
-      </div>
+          ) : null}
+          {signLimitPriceUsd ? (
+            <div className="flex justify-between text-subtle">
+              <span>签名限价</span>
+              <span className="font-mono text-amber-300">
+                {formatNumber(Number(signLimitPriceUsd), 2)}
+              </span>
+            </div>
+          ) : null}
+          {amount.trim() ? (
+            <div className="rounded bg-elevated px-3 py-2">
+              <div className="flex justify-between">
+                <span>深度模拟</span>
+                <span>
+                  {previewLoading ? "计算中…" : preview ? "已更新" : "—"}
+                </span>
+              </div>
+              {preview ? (
+                <div className="mt-2 space-y-1 font-mono text-white">
+                  <div className="flex justify-between">
+                    <span className="font-sans text-subtle">预估成交均价</span>
+                    <span>{preview.avgFillPriceUsd || "—"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="font-sans text-subtle">预计成交</span>
+                    <span>
+                      {preview.filledSize} / {preview.requestedSize}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {creditInsufficient ? (
+            <p className="text-amber-300">
+              当前可用保证金不足，请先充值或领取测试 USDC。
+            </p>
+          ) : null}
+          {leverageTooLowForChain ? (
+            <p className="text-amber-300">
+              所选杠杆与链上最低保证金要求不匹配。
+            </p>
+          ) : null}
+        </div>
+      </details>
     </div>
   );
 }
