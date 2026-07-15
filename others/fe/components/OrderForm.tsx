@@ -26,6 +26,7 @@ import {
 import { useMetanodeAuth } from "@/lib/useMetanodeAuth";
 import {
   applySlippageLimitPriceUsd,
+  DEFAULT_SLIPPAGE_BPS,
   loadStoredSlippageBps,
   manualPriceExceedsSlippage,
   normalizeSlippageBps,
@@ -136,7 +137,7 @@ export default function OrderForm({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [referencePriceUsd, setReferencePriceUsd] = useState("");
   const [signLimitPriceUsd, setSignLimitPriceUsd] = useState("");
-  const [slippageBps, setSlippageBps] = useState(loadStoredSlippageBps);
+  const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
   const [preview, setPreview] = useState<OrderPreviewDTO | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -157,6 +158,10 @@ export default function OrderForm({
     [maxLeverageNum]
   );
   const [leverage, setLeverage] = useState(10);
+
+  useEffect(() => {
+    setSlippageBps(loadStoredSlippageBps());
+  }, []);
 
   useEffect(() => {
     if (isCloseMode) return;
