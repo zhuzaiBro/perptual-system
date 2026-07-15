@@ -4,8 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import {
+  ArrowDownTrayIcon,
+  ArrowsRightLeftIcon,
+  BanknotesIcon,
   CalculatorIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   InformationCircleIcon,
   TicketIcon,
 } from "@heroicons/react/24/outline";
@@ -92,6 +96,10 @@ type Props = {
   hideMarketSelect?: boolean;
   /** 含链上杠杆配置的市场信息（来自 /markets） */
   marketRisk?: PerpMarketDTO;
+  /** 当前订单簿买方数量占比（0–100） */
+  bidSharePct?: number;
+  dayLowUsd?: number;
+  dayHighUsd?: number;
   closeDraft?: CloseDraft | null;
   onCloseDraftApplied?: () => void;
   onOrderSubmitted?: () => void;
@@ -105,6 +113,9 @@ export default function OrderForm({
   indexPriceUsd = 0,
   hideMarketSelect = false,
   marketRisk,
+  bidSharePct,
+  dayLowUsd,
+  dayHighUsd,
   closeDraft,
   onCloseDraftApplied,
   onOrderSubmitted,
@@ -266,40 +277,43 @@ export default function OrderForm({
     saveStoredSlippageBps(next);
   };
 
-  const resolveSignPriceUsd = useCallback((): string | null => {
-    if (!isCloseMode && openPriceMode === "manual") {
-      const manual = price.trim();
-      if (
-        referencePriceUsd &&
-        manualPriceExceedsSlippage(
-          manual,
-          referencePriceUsd,
-          side,
-          slippageBps
-        )
-      ) {
-        return null;
+  const resolveSignPriceUsd = useCallback(
+    (orderSide: OrderSide = side): string | null => {
+      if (!isCloseMode && openPriceMode === "manual") {
+        const manual = price.trim();
+        if (
+          referencePriceUsd &&
+          manualPriceExceedsSlippage(
+            manual,
+            referencePriceUsd,
+            orderSide,
+            slippageBps
+          )
+        ) {
+          return null;
+        }
+        return manual;
       }
-      return manual;
-    }
-    if (signLimitPriceUsd.trim()) return signLimitPriceUsd.trim();
-    if (referencePriceUsd.trim()) {
-      return applySlippageLimitPriceUsd(
-        referencePriceUsd,
-        side,
-        slippageBps
-      );
-    }
-    return price.trim() || null;
-  }, [
-    isCloseMode,
-    openPriceMode,
-    price,
-    referencePriceUsd,
-    side,
-    slippageBps,
-    signLimitPriceUsd,
-  ]);
+      if (signLimitPriceUsd.trim()) return signLimitPriceUsd.trim();
+      if (referencePriceUsd.trim()) {
+        return applySlippageLimitPriceUsd(
+          referencePriceUsd,
+          orderSide,
+          slippageBps
+        );
+      }
+      return price.trim() || null;
+    },
+    [
+      isCloseMode,
+      openPriceMode,
+      price,
+      referencePriceUsd,
+      side,
+      slippageBps,
+      signLimitPriceUsd,
+    ]
+  );
 
   const useSystemOpenPrice =
     (!isCloseMode && openPriceMode === "system") ||
@@ -349,7 +363,7 @@ export default function OrderForm({
     return marginRequired < chainMinMargin - 1e-6;
   }, [isCloseMode, marginRequired, chainMinMargin]);
 
-  const submit = useCallback(async () => {
+  const submit = useCallback(async (submitSide: OrderSide = side) => {
     setErr(null);
     setMsg(null);
     if (!address || !isConnected) {
@@ -372,7 +386,7 @@ export default function OrderForm({
       setErr("请填写数量与价格");
       return;
     }
-    const signPriceUsd = resolveSignPriceUsd();
+    const signPriceUsd = resolveSignPriceUsd(submitSide);
     if (!signPriceUsd) {
       setErr(
         `手动限价超出滑点保护（${slippagePercentLabel(slippageBps)}），请提高滑点或调整价格`
@@ -401,7 +415,7 @@ export default function OrderForm({
       const order = buildMetaNodeOrder({
         perp: selectedPerp,
         signer: address,
-        side,
+        side: submitSide,
         size: amount.trim(),
         priceUsd: signPriceUsd,
       });
@@ -457,6 +471,378 @@ export default function OrderForm({
       setAmount(((maxSizeByCredit * nextPercent) / 100).toFixed(4));
     }
   };
+
+  if (isConnected) {
+    const baseSymbol = selectedMarket?.symbol ?? "BTC";
+    const referenceUsd = priceNum || markUsd || indexPriceUsd;
+    const rangeLow = dayLowUsd && dayLowUsd > 0 ? dayLowUsd : referenceUsd;
+    const rangeHigh = dayHighUsd && dayHighUsd > 0 ? dayHighUsd : referenceUsd;
+    const rangePosition =
+      rangeHigh > rangeLow
+        ? Math.min(
+            100,
+            Math.max(0, ((referenceUsd - rangeLow) / (rangeHigh - rangeLow)) * 100)
+          )
+        : 50;
+    const riskRate =
+      marginRequired > 0 && dealerCreditHuman != null
+        ? Math.min(999, (dealerCreditHuman / marginRequired) * 100)
+        : 999;
+
+    return (
+      <div className="min-h-full bg-[#070a0b] text-foreground">
+        <div className="px-4 pb-7 pt-3">
+          <div className="relative flex h-11 items-center gap-2 rounded-sm bg-[#2c3139] px-3 text-sm text-white">
+            <span className="font-semibold">逐仓</span>
+            <span className="rounded bg-accent/15 px-2 py-1 font-mono text-xs font-bold text-accent">
+              {leverage}X
+            </span>
+            <select
+              aria-label="选择杠杆倍数"
+              value={leverage}
+              onChange={(event) => handleLeverageChange(Number(event.target.value))}
+              className="absolute inset-0 cursor-pointer opacity-0"
+            >
+              {leverageOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}X
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 overflow-hidden rounded bg-[#181d21]">
+            <button
+              type="button"
+              onClick={() => setSide("long")}
+              className={
+                "h-11 rounded border bg-transparent text-sm font-bold transition " +
+                (side === "long"
+                  ? "border-buy text-buy"
+                  : "border-transparent text-subtle hover:text-white")
+              }
+            >
+              买进
+            </button>
+            <button
+              type="button"
+              onClick={() => setSide("short")}
+              className={
+                "h-11 rounded border bg-transparent text-sm font-bold transition " +
+                (side === "short"
+                  ? "border-sell text-sell"
+                  : "border-transparent text-subtle hover:text-white")
+              }
+            >
+              卖出
+            </button>
+          </div>
+
+          <div className="mt-5 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setOpenPriceMode("manual");
+                if (!price.trim() && referenceUsd > 0) {
+                  setPrice(referenceUsd.toFixed(2));
+                }
+              }}
+              className={
+                "rounded border-0 px-3 py-2 text-sm font-semibold " +
+                (openPriceMode === "manual"
+                  ? "bg-[#2c3139] text-white"
+                  : "bg-transparent text-subtle")
+              }
+            >
+              限价
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpenPriceMode("system")}
+              className={
+                "rounded border-0 px-3 py-2 text-sm font-semibold " +
+                (openPriceMode === "system"
+                  ? "bg-[#2c3139] text-white"
+                  : "bg-transparent text-subtle")
+              }
+            >
+              市价
+            </button>
+            <button
+              type="button"
+              disabled
+              className="border-0 bg-transparent px-3 py-2 text-sm font-semibold text-subtle"
+            >
+              高级限价委托
+            </button>
+            <InformationCircleIcon className="ml-auto h-4 w-4 text-subtle" />
+          </div>
+
+          <div className="mt-3 flex items-center gap-1">
+            <button
+              type="button"
+              className="rounded border-0 bg-[#2c3139] px-3 py-2 text-xs font-semibold text-white"
+            >
+              普通
+            </button>
+            <button
+              type="button"
+              disabled
+              className="border-0 bg-transparent px-3 py-2 text-xs font-semibold text-subtle"
+            >
+              自动借款
+            </button>
+            <button
+              type="button"
+              disabled
+              className="border-0 bg-transparent px-3 py-2 text-xs font-semibold text-subtle"
+            >
+              自动还款
+            </button>
+            <InformationCircleIcon className="ml-auto h-4 w-4 text-subtle" />
+          </div>
+
+          <div className="mt-3 flex items-center gap-2 text-xs text-subtle">
+            <span>风险率</span>
+            <span
+              className="relative h-4 w-4 rounded-full"
+              style={{
+                background:
+                  "conic-gradient(#f6c945 0 25%, #16d8d4 25% 72%, #394148 72% 100%)",
+              }}
+            >
+              <span className="absolute inset-[3px] rounded-full bg-[#070a0b]" />
+            </span>
+            <span className="font-mono text-sm font-medium text-buy">
+              {formatNumber(riskRate, 2)}
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            <div className="relative h-[58px] rounded bg-[#1d2227] px-3 pb-2 pt-2">
+              <div className="text-[11px] text-subtle">单价</div>
+              {openPriceMode === "system" ? (
+                <div className="mt-1 truncate pr-14 text-sm font-semibold text-white">
+                  以市场最优价格{side === "long" ? "买入" : "卖出"}
+                </div>
+              ) : (
+                <input
+                  value={price}
+                  onChange={(event) => setPrice(event.target.value)}
+                  inputMode="decimal"
+                  aria-label={isCloseMode ? "平仓限价" : "开仓限价"}
+                  placeholder={referenceUsd > 0 ? referenceUsd.toFixed(2) : "0.00"}
+                  className="mt-0.5 w-[calc(100%-60px)] border-0 bg-transparent p-0 font-mono text-lg text-white outline-none placeholder:text-faint"
+                />
+              )}
+              <span className="absolute bottom-3 right-3 text-sm font-semibold text-white">
+                USDT
+              </span>
+            </div>
+
+            <label className="relative block h-[58px] rounded bg-[#1d2227] px-3 pb-2 pt-2">
+              <span className="block text-[11px] text-subtle">数量</span>
+              <input
+                value={amount}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  setSizePercent(0);
+                }}
+                inputMode="decimal"
+                aria-label="订单数量"
+                placeholder="最小交易数量 0.001"
+                className="mt-0.5 w-[calc(100%-58px)] border-0 bg-transparent p-0 font-mono text-base text-white outline-none placeholder:text-faint"
+              />
+              <span className="absolute bottom-3 right-3 text-sm font-semibold text-white">
+                {baseSymbol}
+              </span>
+            </label>
+
+            <div className="relative px-1 pt-2">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={25}
+                value={sizePercent}
+                aria-label="仓位数量百分比"
+                onChange={(event) =>
+                  handleSizePercentChange(Number(event.target.value))
+                }
+                className="order-size-range w-full"
+                style={{
+                  background:
+                    "linear-gradient(to right, #16d8d4 0%, #16d8d4 " +
+                    sizePercent +
+                    "%, #343a40 " +
+                    sizePercent +
+                    "%, #343a40 100%)",
+                }}
+              />
+              <div className="pointer-events-none absolute left-1 right-1 top-[15px] flex justify-between px-[2px]">
+                {[0, 25, 50, 75, 100].map((tick) => (
+                  <span
+                    key={tick}
+                    className={
+                      "h-1.5 w-1.5 rounded-full " +
+                      (tick <= sizePercent ? "bg-accent" : "bg-[#747f82]")
+                    }
+                  />
+                ))}
+              </div>
+              <div className="mt-1 flex justify-between text-[11px] text-subtle">
+                <span>{sizePercent}%</span>
+                <span />
+              </div>
+            </div>
+
+            <label className="relative block h-[58px] rounded bg-[#1d2227] px-3 pb-2 pt-2">
+              <span className="block text-[11px] text-subtle">金额</span>
+              <input
+                value={notional > 0 ? notional.toFixed(2) : ""}
+                onChange={(event) => {
+                  const total = Number(event.target.value);
+                  if (referenceUsd > 0 && Number.isFinite(total)) {
+                    setAmount((total / referenceUsd).toFixed(4));
+                    setSizePercent(0);
+                  }
+                }}
+                inputMode="decimal"
+                aria-label="订单金额"
+                placeholder="> 5 USDT"
+                className="mt-0.5 w-[calc(100%-58px)] border-0 bg-transparent p-0 font-mono text-base text-white outline-none placeholder:text-faint"
+              />
+              <span className="absolute bottom-3 right-3 text-sm font-semibold text-white">
+                USDT
+              </span>
+            </label>
+          </div>
+
+          <div className="mt-3 flex items-center text-xs text-subtle">
+            <span>
+              可用
+              <b className="ml-1 font-mono font-medium text-white">
+                {dealerCreditHuman != null
+                  ? formatNumber(dealerCreditHuman, 2)
+                  : "0.00"} {" "}
+                USDC
+              </b>
+            </span>
+            <span className="ml-2 rounded-full border border-panelBorder px-1 text-[9px] text-white">
+              Z
+            </span>
+            <BanknotesIcon className="ml-3 h-4 w-4 text-white" />
+            <ArrowDownTrayIcon className="ml-auto h-4 w-4 text-white" />
+            <ArrowsRightLeftIcon className="ml-4 h-4 w-4 text-white" />
+          </div>
+
+          <button
+            type="button"
+            disabled={
+              submitting ||
+              authPending ||
+              !amount.trim() ||
+              (!isCloseMode &&
+                (creditInsufficient || leverageTooLowForChain))
+            }
+            onClick={() => void submit(side)}
+            className={
+              "mt-6 h-12 w-full rounded border-0 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 " +
+              (side === "long" ? "bg-buy" : "bg-sell")
+            }
+          >
+            {submitting
+              ? "提交中…"
+              : `${side === "long" ? "买进" : "卖出"} ${baseSymbol}`}
+          </button>
+
+          <button
+            type="button"
+            className="ml-auto mt-3 flex items-center gap-1 border-0 bg-transparent text-xs text-subtle hover:text-white"
+          >
+            费率
+            <ChevronRightIcon className="h-3.5 w-3.5" />
+          </button>
+
+          {authPending ? (
+            <p className="mt-3 text-[11px] text-amber-400">
+              请在钱包中完成 MetaNode 登录签名…
+            </p>
+          ) : null}
+          {err ? <p className="mt-3 text-[11px] text-sell">{err}</p> : null}
+          {msg ? <p className="mt-3 text-[11px] text-buy">{msg}</p> : null}
+        </div>
+
+        <section className="border-t border-panelBorder px-4 pb-8 pt-5">
+          <div className="flex items-center gap-6">
+            <h3 className="text-base font-bold text-white">交易数据</h3>
+            <span className="relative text-sm font-semibold text-subtle">
+              市场异动
+              <span className="absolute -right-2 -top-1 h-1.5 w-1.5 rounded-full bg-sell" />
+            </span>
+          </div>
+
+          <div className="mt-5 flex items-center gap-2 text-xs">
+            <span className="font-semibold text-white">24小时 价格区间</span>
+            <span className="text-subtle">24小时</span>
+            <ChevronDownIcon className="h-3 w-3 text-subtle" />
+          </div>
+
+          <div className="relative mt-9 h-1.5 rounded-full bg-[#343a40]">
+            <span
+              className="absolute -top-8 -translate-x-1/2 rounded bg-[#2c3139] px-2 py-1 text-[11px] font-semibold text-white after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:border-4 after:border-transparent after:border-t-[#2c3139]"
+              style={{ left: `${rangePosition}%` }}
+            >
+              当前价格
+            </span>
+            <span
+              className="absolute -top-1 h-3.5 w-1 rounded-full bg-accent"
+              style={{ left: `${rangePosition}%` }}
+            />
+          </div>
+
+          <div className="mt-3 flex justify-between text-xs text-subtle">
+            <div>
+              <div>24小时 最低价</div>
+              <div className="mt-1 font-mono font-medium text-white">
+                {rangeLow > 0 ? formatNumber(rangeLow, 2) : "—"}
+              </div>
+            </div>
+            <div className="text-right">
+              <div>24小时 最高价</div>
+              <div className="mt-1 font-mono font-medium text-white">
+                {rangeHigh > 0 ? formatNumber(rangeHigh, 2) : "—"}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-7 grid grid-cols-2 gap-5 text-xs">
+            <div>
+              <div className="text-subtle">成交用户占比 (24小时)</div>
+              <div className="mt-2 font-mono font-semibold text-white">
+                {bidSharePct != null ? `${formatNumber(bidSharePct, 2)}%` : "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-subtle">交易选择倾向 (24小时)</div>
+              <div className={"mt-2 font-semibold " + (side === "long" ? "text-buy" : "text-sell")}>
+                {side === "long" ? "买" : "卖"}
+              </div>
+            </div>
+            <MarketGauge
+              label="买卖人数占比 (24小时)"
+              buyShare={bidSharePct}
+            />
+            <MarketGauge
+              label="买卖挂单金额占比 (24小时)"
+              buyShare={bidSharePct}
+            />
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-full bg-[#070a0b] text-foreground">
       <div className="flex h-14 items-end gap-7 border-b border-panelBorder px-5">
@@ -737,34 +1123,7 @@ export default function OrderForm({
         </div>
 
         {isConnected ? (
-          <>
-            <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded bg-panelBorder p-px">
-              <button
-                type="button"
-                onClick={() => setSide("long")}
-                className={
-                  "h-10 text-xs font-bold " +
-                  (side === "long"
-                    ? "bg-buy text-[#03120d]"
-                    : "bg-[#20252b] text-subtle")
-                }
-              >
-                买入 / 做多
-              </button>
-              <button
-                type="button"
-                onClick={() => setSide("short")}
-                className={
-                  "h-10 text-xs font-bold " +
-                  (side === "short"
-                    ? "bg-sell text-white"
-                    : "bg-[#20252b] text-subtle")
-                }
-              >
-                卖出 / 做空
-              </button>
-            </div>
-
+          <div className="mt-5 grid grid-cols-2 gap-2">
             <button
               type="button"
               disabled={
@@ -774,25 +1133,40 @@ export default function OrderForm({
                 (!isCloseMode &&
                   (creditInsufficient || leverageTooLowForChain))
               }
-              onClick={() => void submit()}
-              className={
-                "mt-3 w-full rounded py-3 text-sm font-bold disabled:opacity-40 " +
-                (side === "long"
-                  ? "bg-buy text-[#03120d]"
-                  : "bg-sell text-white")
-              }
+              onClick={() => {
+                setSide("long");
+                void submit("long");
+              }}
+              className="h-12 rounded border-0 bg-buy text-sm font-bold text-[#03120d] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {submitting
-                ? "签名并提交…"
+                ? "提交中…"
                 : isCloseMode
-                  ? side === "long"
-                    ? "平空 / 买入"
-                    : "平多 / 卖出"
-                  : side === "long"
-                    ? "开多"
-                    : "开空"}
+                  ? "买入 / 平空"
+                  : "买入 / 做多"}
             </button>
-          </>
+            <button
+              type="button"
+              disabled={
+                submitting ||
+                authPending ||
+                (panelMode === "close" && !closeDraft && !amount) ||
+                (!isCloseMode &&
+                  (creditInsufficient || leverageTooLowForChain))
+              }
+              onClick={() => {
+                setSide("short");
+                void submit("short");
+              }}
+              className="h-12 rounded border-0 bg-sell text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {submitting
+                ? "提交中…"
+                : isCloseMode
+                  ? "卖出 / 平多"
+                  : "卖出 / 做空"}
+            </button>
+          </div>
         ) : (
           <div className="mt-6 space-y-3">
             <Link
@@ -973,6 +1347,49 @@ export default function OrderForm({
           ) : null}
         </div>
       </details>
+    </div>
+  );
+}
+
+function MarketGauge({
+  label,
+  buyShare,
+}: {
+  label: string;
+  buyShare?: number;
+}) {
+  const clampedShare = Math.min(100, Math.max(0, buyShare ?? 50));
+
+  return (
+    <div>
+      <div className="text-subtle">{label}</div>
+      <div
+        className="relative mx-auto mt-3 aspect-[2/1] w-24 overflow-hidden"
+        aria-label={
+          buyShare != null
+            ? `买方占比 ${formatNumber(clampedShare, 2)}%`
+            : "买卖占比暂无数据"
+        }
+      >
+        <div
+          className="absolute inset-0 rounded-t-full"
+          style={{
+            background:
+              buyShare != null
+                ? `conic-gradient(from 270deg at 50% 100%, #16c995 0deg ${clampedShare * 1.8}deg, #ff3d68 ${clampedShare * 1.8}deg 180deg, transparent 180deg 360deg)`
+                : "conic-gradient(from 270deg at 50% 100%, #343a40 0deg 180deg, transparent 180deg 360deg)",
+          }}
+        />
+        <div className="absolute bottom-0 left-1/2 h-[38px] w-[72px] -translate-x-1/2 rounded-t-full bg-[#070a0b]" />
+        <div className="absolute inset-x-0 bottom-0 text-center">
+          <div className="font-mono text-sm font-semibold text-buy">
+            {buyShare != null ? `${formatNumber(clampedShare, 2)}%` : "—"}
+          </div>
+          <div className="mt-0.5 text-[10px] text-buy">
+            {buyShare != null ? "买" : "暂无"}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import FundingRatePanel from "@/components/FundingRatePanel";
 import { formatNumber } from "@/lib/format";
 import { formatLeverageLabel, resolveMarketRisk } from "@/lib/leverage";
@@ -15,6 +16,11 @@ type Props = {
   indexPriceUsd: number;
   /** 订单簿多空数量比（0–100，无数据为 undefined） */
   bidSharePct?: number;
+};
+
+const CRYPTO_ICON_BY_SYMBOL: Record<string, string> = {
+  BTC: "/crypto/btc.png",
+  ETH: "/crypto/eth.png",
 };
 
 export default function FuturesContractBar({
@@ -35,6 +41,8 @@ export default function FuturesContractBar({
       : 0;
   const risk = resolveMarketRisk(market);
   const leverageLabel = formatLeverageLabel(risk.maxLeverage);
+  const baseSymbol = (market?.name ?? "").split("-")[0].toUpperCase();
+  const iconSrc = CRYPTO_ICON_BY_SYMBOL[baseSymbol];
 
   return (
     <div className="border-b border-panelBorder bg-surface px-3 sm:px-5">
@@ -54,9 +62,20 @@ export default function FuturesContractBar({
               ))}
             </select>
           ) : null}
-          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#f7931a] text-[11px] font-black text-white">
-            ₿
-          </div>
+          {iconSrc ? (
+            <Image
+              src={iconSrc}
+              alt={`${baseSymbol} 图标`}
+              width={32}
+              height={32}
+              className="h-8 w-8 shrink-0 rounded-full object-cover"
+              priority
+            />
+          ) : (
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-elevated text-[11px] font-black text-accent">
+              {baseSymbol.slice(0, 1) || "?"}
+            </div>
+          )}
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-bold text-white sm:text-base">

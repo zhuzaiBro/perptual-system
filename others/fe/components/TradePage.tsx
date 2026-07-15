@@ -198,6 +198,21 @@ export default function TradePage({
     [bookBids, bookAsks]
   );
 
+  const dayRange = useMemo(() => {
+    const cutoff = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
+    const points = kline.filter(
+      (point) =>
+        point.time >= cutoff &&
+        Number.isFinite(point.low) &&
+        Number.isFinite(point.high)
+    );
+    if (points.length === 0) return { low: undefined, high: undefined };
+    return {
+      low: Math.min(...points.map((point) => point.low)),
+      high: Math.max(...points.map((point) => point.high)),
+    };
+  }, [kline]);
+
   const symbol =
     metaMarkets.find((m) => m.address.toLowerCase() === selectedPerp.toLowerCase())
       ?.symbol ?? "BTC";
@@ -407,6 +422,9 @@ export default function TradePage({
               marketRisk={selectedMarketDto}
               markPriceRaw={markPrices[selectedPerp.toLowerCase()]}
               indexPriceUsd={currentIndexUsd}
+              bidSharePct={bidSharePct}
+              dayLowUsd={dayRange.low}
+              dayHighUsd={dayRange.high}
               hideMarketSelect
               closeDraft={closeDraft}
               onCloseDraftApplied={() => setCloseDraft(null)}

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { formatNumber } from "@/lib/format";
 import { markPriceToUsd } from "@/lib/metanode-markets";
 import type { PerpMarketDTO } from "@/lib/metanode-api";
@@ -45,6 +46,13 @@ export default function MetaNodeTopBar({
     indexPriceUsd > 0 ? indexPriceUsd : markPriceToUsd(current?.indexPrice);
   const live = realtimeStatus === "subscribed";
   const displayName = current?.name ?? "—";
+  const currentBaseSymbol = displayName.split("-")[0].toUpperCase();
+  const currentIconSrc =
+    currentBaseSymbol === "BTC"
+      ? "/crypto/btc.png"
+      : currentBaseSymbol === "ETH"
+        ? "/crypto/eth.png"
+        : null;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -108,9 +116,19 @@ export default function MetaNodeTopBar({
             onClick={() => setIsOpen(!isOpen)}
             className="flex h-9 items-center gap-2 rounded border border-panelBorder bg-elevated/55 px-2 text-left hover:border-faint hover:bg-elevated md:min-w-[168px]"
           >
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-[11px] font-black text-page">
-              {(current?.name.split("-")[0] ?? "?").slice(0, 1)}
-            </div>
+            {currentIconSrc ? (
+              <Image
+                src={currentIconSrc}
+                alt={`${currentBaseSymbol} 图标`}
+                width={28}
+                height={28}
+                className="h-7 w-7 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-[11px] font-black text-page">
+                {currentBaseSymbol.slice(0, 1) || "?"}
+              </div>
+            )}
             <div className="text-left">
               <div className="flex items-center gap-1.5">
                 <div className="text-[13px] font-semibold text-white">
@@ -217,7 +235,75 @@ export default function MetaNodeTopBar({
         </div>
 
         <div className="ml-auto hidden md:block lg:ml-0">
-          <ConnectButton />
+          <ConnectButton.Custom>
+            {({
+              account,
+              chain,
+              mounted,
+              openAccountModal,
+              openChainModal,
+              openConnectModal,
+            }) => {
+              const connected = mounted && account && chain;
+
+              if (!connected) {
+                return (
+                  <button
+                    type="button"
+                    onClick={openConnectModal}
+                    className="h-9 rounded border-0 bg-accent px-4 text-xs font-bold text-[#031011] transition hover:brightness-110"
+                  >
+                    连接钱包
+                  </button>
+                );
+              }
+
+              return (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={openChainModal}
+                    className={
+                      "flex h-8 items-center gap-1.5 rounded border border-panelBorder bg-elevated/80 px-2.5 text-[11px] font-semibold transition hover:border-faint hover:bg-elevated " +
+                      (chain.unsupported ? "text-sell" : "text-white")
+                    }
+                  >
+                    {chain.iconUrl ? (
+                      <img
+                        src={chain.iconUrl}
+                        alt=""
+                        className="h-4 w-4 rounded-full"
+                      />
+                    ) : (
+                      <span className="h-2 w-2 rounded-full bg-accent" />
+                    )}
+                    <span>{chain.unsupported ? "网络错误" : chain.name}</span>
+                    <ChevronDownIcon className="h-3 w-3 text-subtle" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={openAccountModal}
+                    className="flex h-8 max-w-[142px] items-center gap-1.5 rounded border border-panelBorder bg-elevated/80 px-2.5 text-[11px] font-semibold text-white transition hover:border-faint hover:bg-elevated"
+                  >
+                    {account.ensAvatar ? (
+                      <img
+                        src={account.ensAvatar}
+                        alt=""
+                        className="h-4 w-4 rounded-full"
+                      />
+                    ) : (
+                      <span className="grid h-4 w-4 place-items-center rounded-full bg-buy text-[8px] font-black text-[#03120d]">
+                        W
+                      </span>
+                    )}
+                    <span className="truncate">{account.displayName}</span>
+                    <ChevronDownIcon className="h-3 w-3 shrink-0 text-subtle" />
+                  </button>
+                </div>
+              );
+            }}
+          </ConnectButton.Custom>
         </div>
         <div className="md:hidden">
           <ConnectButton
