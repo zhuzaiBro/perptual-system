@@ -40,6 +40,7 @@ import {
 } from "@/lib/metanode-markets";
 import {
   buildMetaNodeOrder,
+  normalizeOrderDecimal,
   orderTypedData,
   toCreateOrderBody,
   type OrderSide,
@@ -285,7 +286,7 @@ export default function OrderForm({
   const resolveSignPriceUsd = useCallback(
     (orderSide: OrderSide = side): string | null => {
       if (!isCloseMode && openPriceMode === "manual") {
-        const manual = price.trim();
+        const manual = normalizeOrderDecimal(price);
         if (
           referencePriceUsd &&
           manualPriceExceedsSlippage(
@@ -307,7 +308,7 @@ export default function OrderForm({
           slippageBps
         );
       }
-      return price.trim() || null;
+      return normalizeOrderDecimal(price) || null;
     },
     [
       isCloseMode,
@@ -325,8 +326,8 @@ export default function OrderForm({
     (isCloseMode && Boolean(closeDraft));
 
   const notional = useMemo(() => {
-    const p = Number(price) || markUsd || 0;
-    const a = Number(amount) || 0;
+    const p = Number(normalizeOrderDecimal(price)) || markUsd || 0;
+    const a = Number(normalizeOrderDecimal(amount)) || 0;
     return p * a;
   }, [price, amount, markUsd]);
 
@@ -421,7 +422,7 @@ export default function OrderForm({
         perp: selectedPerp,
         signer: address,
         side: submitSide,
-        size: amount.trim(),
+        size: normalizeOrderDecimal(amount),
         priceUsd: signPriceUsd,
       });
       const typed = orderTypedData(order);
@@ -463,7 +464,7 @@ export default function OrderForm({
     leverageTooLowForChain,
   ]);
 
-  const priceNum = Number(price) || 0;
+  const priceNum = Number(normalizeOrderDecimal(price)) || 0;
   const maxSizeByCredit = useMemo(() => {
     const reference = priceNum || markUsd || indexPriceUsd;
     if (isCloseMode || !reference || dealerCreditHuman == null) return 0;
@@ -955,7 +956,7 @@ export default function OrderForm({
             onClick={() => {
               setOpenPriceMode("manual");
               if (!price.trim() && (markUsd > 0 || indexPriceUsd > 0)) {
-                setPrice(formatNumber(markUsd || indexPriceUsd, 2));
+                setPrice((markUsd || indexPriceUsd).toFixed(2));
               }
             }}
             className={
@@ -1062,7 +1063,7 @@ export default function OrderForm({
             disabled={markUsd <= 0 && indexPriceUsd <= 0}
             onClick={() => {
               setOpenPriceMode("manual");
-              setPrice(formatNumber(markUsd || indexPriceUsd, 2));
+              setPrice((markUsd || indexPriceUsd).toFixed(2));
             }}
             className="rounded border-0 bg-[#2c3139] text-sm font-semibold text-subtle hover:text-white disabled:opacity-40"
           >

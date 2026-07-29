@@ -43,6 +43,14 @@ export type MetaNodeOrderPayload = {
   nonce: number;
 };
 
+/**
+ * UI 可使用千分位展示价格，但 viem.parseUnits 只接受纯十进制字符串。
+ * 在签名边界统一移除分组符，避免展示格式泄漏到链上订单编码。
+ */
+export function normalizeOrderDecimal(value: string): string {
+  return value.trim().replace(/[,\uFF0C_\s]/g, "");
+}
+
 /** 与 backend chain.PackOrderInfo 一致 */
 export function packOrderInfo(
   makerFee: bigint,
@@ -66,11 +74,11 @@ export function buildOrderAmounts(
   sizeHuman: string,
   priceUsdHuman: string
 ): { paperAmount: bigint; creditAmount: bigint } {
-  const size = parseUnits(sizeHuman.trim() || "0", 18);
+  const size = parseUnits(normalizeOrderDecimal(sizeHuman) || "0", 18);
   if (size <= 0n) {
     throw new Error("数量须大于 0");
   }
-  const price6 = parseUnits(priceUsdHuman.trim() || "0", 6);
+  const price6 = parseUnits(normalizeOrderDecimal(priceUsdHuman) || "0", 6);
   if (price6 <= 0n) {
     throw new Error("价格须大于 0");
   }
