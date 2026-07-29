@@ -25,6 +25,8 @@ import (
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
 
+const failedMatchRetryDelay = 30 * time.Second
+
 // MatchEngine 内存撮合 +（可选）链上结算。新进入订单作为 taker，已在簿订单作为 maker。
 type MatchEngine struct {
 	config     config.MatchEngineConfig
@@ -861,7 +863,7 @@ func (e *MatchEngine) submitBatch(trades []*MatchResult) {
 
 		if e.chain == nil {
 			logx.Error("chain client nil, rollback match (no on-chain settle)")
-			e.rollbackMatch(trade, matchAmt)
+			e.rollbackMatchAfter(trade, matchAmt, failedMatchRetryDelay)
 			continue
 		}
 
@@ -875,7 +877,7 @@ func (e *MatchEngine) submitBatch(trades []*MatchResult) {
 		td, err := chain.BuildMatchTradeData(trade.TakerOrder, trade.MakerOrder, matchAmt)
 		if err != nil {
 			logx.Errorf("build trade data: %v", err)
-			e.rollbackMatch(trade, matchAmt)
+			e.rollbackMatchAfter(trade, matchAmt, failedMatchRetryDelay)
 			continue
 		}
 
@@ -883,7 +885,7 @@ func (e *MatchEngine) submitBatch(trades []*MatchResult) {
 		tx, err := e.chain.SubmitPerpTrade(ctx, perp, td)
 		if err != nil {
 			logx.Errorf("SubmitPerpTrade failed: %v", err)
-			e.rollbackMatch(trade, matchAmt)
+			e.rollbackMatchAfter(trade, matchAmt, failedMatchRetryDelay)
 			continue
 		}
 
@@ -891,12 +893,12 @@ func (e *MatchEngine) submitBatch(trades []*MatchResult) {
 		rec, err := bind.WaitMined(ctx, e.chain.RPC(), tx)
 		if err != nil {
 			logx.Errorf("WaitMined %s: %v", txHash, err)
-			e.rollbackMatch(trade, matchAmt)
+			e.rollbackMatchAfter(trade, matchAmt, failedMatchRetryDelay)
 			continue
 		}
 		if rec == nil || rec.Status != 1 {
 			logx.Errorf("trade tx reverted or failed: %s status=%v", txHash, recStatus(rec))
-			e.rollbackMatch(trade, matchAmt)
+			e.rollbackMatchAfter(trade, matchAmt, failedMatchRetryDelay)
 			continue
 		}
 
@@ -927,6 +929,17 @@ func (e *MatchEngine) submitBatch(trades []*MatchResult) {
 			logx.Infof("trade settled on-chain: tx=%s perp=%s amount=%s", txHash, trade.TakerOrder.Perp, matchAmt.String())
 		}
 	}
+}
+
+func (e *MatchEngine) rollbackMatchAfter(trade *MatchResult, matchAmt *big.Int, delay time.Duration) {
+	if delay <= 0 {
+		e.rollbackMatch(trade, matchAmt)
+		return
+	}
+	amount := new(big.Int).Set(matchAmt)
+	time.AfterFunc(delay, func() {
+		e.rollbackMatch(trade, amount)
+	})
 }
 
 func recStatus(rec *types.Receipt) uint64 {

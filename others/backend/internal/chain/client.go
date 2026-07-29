@@ -400,7 +400,9 @@ func (c *Client) SubmitPerpTrade(ctx context.Context, perp common.Address, trade
 	msg := ethereum.CallMsg{From: c.fromAddr, To: &perp, Gas: c.maxGas, GasPrice: gasPrice, Data: data}
 	gasLimit, err := c.eth.EstimateGas(ctx, msg)
 	if err != nil {
-		gasLimit = c.maxGas
+		// EstimateGas 会返回合约回滚原因（如 TRADER_NOT_SAFE）。此时强行用
+		// MaxGasLimit 广播只会产生 status=0 的交易并消耗测试网 ETH。
+		return nil, fmt.Errorf("estimate trade gas: %w", err)
 	}
 	if gasLimit > c.maxGas {
 		gasLimit = c.maxGas
