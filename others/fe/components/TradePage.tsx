@@ -5,6 +5,7 @@ import { KlinePoint } from "@/lib/types";
 import Chart from "@/components/Chart";
 import OrderForm, { type CloseDraft } from "@/components/OrderForm";
 import Positions from "@/components/Positions";
+import AccountActivity from "@/components/AccountActivity";
 import MetaNodeTopBar from "@/components/MetaNodeTopBar";
 import FuturesContractBar from "@/components/FuturesContractBar";
 import MarketDepthTabs from "@/components/MarketDepthTabs";
@@ -44,6 +45,7 @@ const RESOLUTIONS = [
 
 const POLL_MS = 5_000;
 const CHAIN_MARKETS_POLL_MS = 30_000;
+type AccountTab = "positions" | "orders" | "trades";
 
 function intervalSeconds(resolution: string): number {
   if (resolution === "1m") return 60;
@@ -155,6 +157,7 @@ export default function TradePage({
   const [dataError, setDataError] = useState<string | null>(null);
   const [closeDraft, setCloseDraft] = useState<CloseDraft | null>(null);
   const [positionsRefresh, setPositionsRefresh] = useState(0);
+  const [accountTab, setAccountTab] = useState<AccountTab>("positions");
 
   const currentMarkUsd = useMemo(
     () => markPriceToUsd(markPrices[selectedPerp.toLowerCase()]),
@@ -436,18 +439,44 @@ export default function TradePage({
         <div className="mt-2 overflow-hidden border border-panelBorder bg-panel">
           <div className="flex h-10 items-center justify-between border-b border-panelBorder px-4">
             <div className="flex h-full items-center gap-6 text-xs">
-              <span className="relative flex h-full items-center font-semibold text-white after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-accent">当前仓位</span>
-              <span className="text-subtle">当前委托</span>
-              <span className="text-subtle">历史成交</span>
+              {[
+                ["positions", "当前仓位"],
+                ["orders", "当前委托"],
+                ["trades", "历史成交"],
+              ].map(([id, label]) => {
+                const active = accountTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setAccountTab(id as AccountTab)}
+                    className={`relative flex h-full items-center font-semibold transition-colors ${
+                      active
+                        ? "text-white after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-accent"
+                        : "text-subtle hover:text-foreground"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
             <span className="hidden text-[10px] text-subtle sm:block">数据来自 Sepolia · 自动更新</span>
           </div>
           <div className="p-2">
-            <Positions
-              refreshKey={positionsRefresh}
-              onRequestClose={(draft) => setCloseDraft(draft)}
-              embedded
-            />
+            {accountTab === "positions" ? (
+              <Positions
+                refreshKey={positionsRefresh}
+                onRequestClose={(draft) => setCloseDraft(draft)}
+                embedded
+              />
+            ) : (
+              <AccountActivity
+                mode={accountTab}
+                selectedPerp={selectedPerp}
+                refreshKey={positionsRefresh}
+              />
+            )}
           </div>
         </div>
       </main>

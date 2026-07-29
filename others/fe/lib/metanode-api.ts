@@ -643,3 +643,21 @@ export async function fetchMetanodeTrades(
   });
   return (await res.json()) as ListTradesRespDTO;
 }
+
+/** 当前钱包的成交记录；与公共市场最新成交分开查询。 */
+export async function fetchMetanodeTraderTrades(
+  trader: string,
+  perp?: string,
+  pageSize = 50
+): Promise<ListTradesRespDTO> {
+  const q = new URLSearchParams({
+    trader,
+    page: "1",
+    pageSize: String(pageSize),
+  });
+  if (perp) q.set("perp", perp);
+  const res = await fetch(`${METANODE_API_BASE}/api/v1/trades?${q}`, {
+    cache: "no-store",
+  });
+  return (await res.json()) as ListTradesRespDTO;
+}
